@@ -121,16 +121,23 @@ void main() {
     await tester.pumpWidget(_host(model, const HomeShell()));
     await tester.pump();
 
-    // No tab bar under the transport any more.
-    expect(find.text('专辑'), findsNothing);
+    // No tab bar under the transport any more. The home page behind the
+    // drawer does carry a card titled 专辑, so scope the drawer lookups.
     expect(find.byTooltip('打开侧边栏'), findsOneWidget);
 
     // A left-to-right touch from the edge reveals the PC-style sidebar.
     await tester.dragFrom(const Offset(4, 420), const Offset(260, 0));
     await tester.pumpAndSettle();
 
-    expect(find.text('专辑'), findsOneWidget);
-    expect(find.text('艺术家'), findsOneWidget);
+    final drawer = find.descendant(
+      of: find.byType(Drawer),
+      matching: find.text('专辑'),
+    );
+    expect(drawer, findsOneWidget);
+    expect(
+      find.descendant(of: find.byType(Drawer), matching: find.text('艺术家')),
+      findsOneWidget,
+    );
     expect(find.text('乐记'), findsOneWidget);
   });
 
@@ -146,8 +153,15 @@ void main() {
     await tester.tap(find.byTooltip('打开侧边栏'));
     await tester.pumpAndSettle();
 
-    expect(find.text('歌单'), findsOneWidget);
-    expect(find.text('收藏'), findsOneWidget);
+    final drawer = find.byType(Drawer);
+    expect(
+      find.descendant(of: drawer, matching: find.text('歌单')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: drawer, matching: find.text('收藏')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('picking a section closes the drawer', (tester) async {
@@ -163,7 +177,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byTooltip('退出登录'), findsOneWidget);
 
-    await tester.tap(find.text('专辑'));
+    await tester.tap(
+      find.descendant(of: find.byType(Drawer), matching: find.text('专辑')),
+    );
     await tester.pumpAndSettle();
 
     expect(model.section, Section.albums);

@@ -136,6 +136,30 @@ class MusicFreeClient {
     return songs.map(_toTrack).toList();
   }
 
+  /// An artist drill-down: the artist plus their albums — the same payload
+  /// the web player's artist view is built from. Some servers report an
+  /// empty albumCount while still returning the album rows, so the richer
+  /// count wins.
+  Future<ArtistPage> artistDetail(String id) async {
+    final root = await _get('rest/getArtist.view', {'id': id});
+    final node = _child(root, 'artist');
+    if (node == null) return ArtistPage(artist: Artist(id: id, name: ''), albums: const []);
+    final artist = _toArtist(node);
+    final albums = _objects(node['album']).map(_toAlbum).toList();
+    return ArtistPage(
+      artist: Artist(
+        id: artist.id,
+        name: artist.name,
+        coverId: artist.coverId,
+        trackCount: artist.trackCount,
+        albumCount: albums.length > artist.albumCount
+            ? albums.length
+            : artist.albumCount,
+      ),
+      albums: albums,
+    );
+  }
+
   Future<List<Track>> playlistTracks(String playlistId) async {
     final root = await _get('rest/getPlaylist.view', {'id': playlistId});
     final playlist = _child(root, 'playlist');
@@ -162,6 +186,75 @@ class MusicFreeClient {
     final result = _child(root, 'searchResult3');
     final songs = result != null ? _objects(result['song']) : _objects(root['song']);
     return songs.map(_toTrack).toList();
+  }
+
+  /// One query, three result groups — the home page's comprehensive search
+  /// refreshes songs, albums and artists from a single request.
+  Future<SearchAll> searchAll(
+    String query, {
+    int songLimit = 30,
+    int albumLimit = 12,
+    int artistLimit = 12,
+  }) async {
+    final text = query.trim();
+    if (text.isEmpty) return const SearchAll.empty();
+    final root = await _get('rest/search3.view', {
+      'query': text,
+      'songCount': '$songLimit',
+      'albumCount': '$albumLimit',
+      'artistCount': '$artistLimit',
+    });
+    final result = _child(root, 'searchResult3');
+    return SearchAll(
+      tracks: (result != null ? _objects(result['song']) : _objects(root['song']))
+          .map(_toTrack)
+          .toList(),
+      albums: (result != null ? _objects(result['album']) : _objects(root['album']))
+          .map(_toAlbum)
+          .toList(),
+      artists: (result != null ? _objects(result['artist']) : _objects(root['artist']))
+          .map(_toArtist)
+          .toList(),
+    );
+  }
+
+  /// A Subsonic album list. Types used by the home page: `highest`
+  /// (most played), `recent` (recently played), `newest` (recently added).
+  Future<List<Album>> albumList({required String type, int size = 10}) async {
+    final root = await _get('rest/getAlbumList2.view', {
+      'type': type,
+      'size': '$size',
+    });
+    final node = _child(root, 'albumList2');
+    return _objects(node?['album']).map(_toAlbum).toList();
+  }
+
+  /// The home page's hot songs: the server has no global song ranking, so
+  /// this walks the most-played albums and round-robins their tracks — the
+  /// busiest records each contribute, newest first within an album.
+  Future<List<Track>> hotTracks({int limit = 20, int albumPool = 6}) async {
+    final albums = await albumList(type: 'highest', size: albumPool);
+    if (albums.isEmpty) return const [];
+    final lists = await Future.wait(
+      albums.take(albumPool).map((album) => albumTracks(album.id)),
+    );
+    final merged = <Track>[];
+    final seen = <String>{};
+    var cursor = 0;
+    while (merged.length < limit) {
+      var advanced = false;
+      for (final list in lists) {
+        if (cursor < list.length) {
+          final track = list[cursor];
+          if (seen.add(track.id)) merged.add(track);
+          advanced = true;
+          if (merged.length >= limit) break;
+        }
+      }
+      if (!advanced) break;
+      cursor++;
+    }
+    return merged;
   }
 
   /// OpenSubsonic structured lyrics, the endpoint the web player uses.

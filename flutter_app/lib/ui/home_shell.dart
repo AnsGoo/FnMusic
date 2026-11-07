@@ -47,23 +47,15 @@ class _HomeShellState extends State<HomeShell> {
 
   void _surfaceError(AppModel model) {
     final error = model.error;
-    if (error == null) {
-      _shownError = null;
-      return;
-    }
-    if (error == _shownError) return;
+    if (error == null || error == _shownError) return;
     _shownError = error;
+    // Transient failures (a dead file being skipped, a momentary network
+    // hiccup) used to pop a dark snackbar that vanished after three seconds
+    // — more noise than signal. They now go to the debug console only.
+    // consumeError() notifies listeners, which must not happen while the
+    // widget tree is mid-build — hence the post-frame hop.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final messenger = ScaffoldMessenger.maybeOf(context);
-      messenger?.showSnackBar(
-        SnackBar(
-          content: Text(error),
-          backgroundColor: Mf.raised,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      debugPrint('[MusicFly] $error');
       model.consumeError();
     });
   }
@@ -224,24 +216,14 @@ class _Sidebar extends StatelessWidget {
             ),
             child: Row(
               children: [
+                _AvatarLetter(username: model.session?.username ?? ''),
+                const SizedBox(width: 9),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        model.session?.username ?? '',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Mf.textSoft, fontSize: 12),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        model.session?.hostLabel ?? '',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Mf.faint, fontSize: 11),
-                      ),
-                    ],
+                  child: Text(
+                    model.session?.username ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Mf.textSoft, fontSize: 12),
                   ),
                 ),
                 MfIconButton(
@@ -255,6 +237,43 @@ class _Sidebar extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Circular avatar showing the first character of the username, in the same
+/// clay gradient as the primary buttons.
+class _AvatarLetter extends StatelessWidget {
+  const _AvatarLetter({required this.username});
+
+  final String username;
+
+  @override
+  Widget build(BuildContext context) {
+    final letter = username.characters.isEmpty
+        ? '?'
+        : username.characters.first.toUpperCase();
+    return Container(
+      width: 30,
+      height: 30,
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Mf.accentHover, Mf.accent],
+        ),
+      ),
+      child: Text(
+        letter,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          height: 1,
+        ),
       ),
     );
   }
@@ -279,6 +298,7 @@ class _NavItem extends StatefulWidget {
 
 /// The rail and the phone drawer share the same glyph per section.
 IconData _sectionIcon(Section section) => switch (section) {
+  Section.home => Icons.home_outlined,
   Section.tracks => Icons.library_music_outlined,
   Section.albums => Icons.album_outlined,
   Section.artists => Icons.person_outline,

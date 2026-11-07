@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../audio/player.dart';
 import '../data/models.dart';
 import '../state/app_model.dart';
+import 'cast_sheet.dart';
 import 'controls.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -99,6 +100,11 @@ class _PlayerBarState extends State<PlayerBar>
     double position,
     double durationSeconds,
   ) {
+    // Mirror of everything right of the scrubber: the total clock (38) + gap
+    // (10) + gap (14) + cast button (30) on mobile, plus the volume icon and
+    // slider (16+8+96+10) on desktop. The transport buttons and the inline
+    // lyric centre over this span so they line up with the scrubber.
+    final rightSpan = isMobilePlatform ? 92.0 : 222.0;
     return Row(
       children: [
         // Like the web transport (flex: 1.2 middle): the song info and the
@@ -113,26 +119,40 @@ class _PlayerBarState extends State<PlayerBar>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // The transport buttons are centered over the scrubber, not
+              // over the whole column: the progress row has a 38px clock
+              // (+10 gap) on the left and a 38px clock (+10+14 gap), the
+              // cast button, the volume icon and the 96px volume slider on
+              // the right, so mirror those spans to find the scrubber's
+              // true center.
               Row(
-                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  MfIconButton(
-                    icon: Icons.skip_previous_rounded,
-                    size: 30,
-                    glyph: 20,
-                    tooltip: '上一首',
-                    onTap: model.previous,
+                  const SizedBox(width: 48),
+                  Expanded(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        MfIconButton(
+                          icon: Icons.skip_previous_rounded,
+                          size: 30,
+                          glyph: 20,
+                          tooltip: '上一首',
+                          onTap: model.previous,
+                        ),
+                        const SizedBox(width: 4),
+                        _playButton(model, audio),
+                        const SizedBox(width: 4),
+                        MfIconButton(
+                          icon: Icons.skip_next_rounded,
+                          size: 30,
+                          glyph: 20,
+                          tooltip: '下一首',
+                          onTap: model.next,
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(width: 4),
-                  _playButton(model, audio),
-                  const SizedBox(width: 4),
-                  MfIconButton(
-                    icon: Icons.skip_next_rounded,
-                    size: 30,
-                    glyph: 20,
-                    tooltip: '下一首',
-                    onTap: model.next,
-                  ),
+                  SizedBox(width: rightSpan),
                 ],
               ),
               Row(
@@ -165,32 +185,56 @@ class _PlayerBarState extends State<PlayerBar>
                       ),
                     ),
                   ),
+                  const SizedBox(width: 14),
+                  MfIconButton(
+                    icon: Icons.cast_rounded,
+                    size: 30,
+                    glyph: 18,
+                    color: model.casting ? Mf.accentHover : null,
+                    tooltip: model.casting ? '正在投屏' : '投屏',
+                    onTap: () => showCastSheet(context),
+                  ),
+                  if (!isMobilePlatform) ...[
+                    const SizedBox(width: 10),
+                    const Icon(
+                      Icons.volume_up_rounded,
+                      size: 16,
+                      color: Mf.faint,
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 96,
+                      child: MfScrubber(
+                        fraction: model.volume,
+                        thumbColor: Mf.textSoft,
+                        activeColor: Mf.muted,
+                        onScrub: model.setVolume,
+                      ),
+                    ),
+                  ],
                 ],
               ),
               SizedBox(
                 height: 17,
-                child: Center(
-                  child: _InlineLyric(model: model, position: audio.position),
+                // Same mirror spans as the transport row: centre the lyric
+                // over the scrubber's true span, not the whole column.
+                child: Row(
+                  children: [
+                    const SizedBox(width: 48),
+                    Expanded(
+                      child: Center(
+                        child: _InlineLyric(
+                          model: model,
+                          position: audio.position,
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: rightSpan),
+                  ],
                 ),
               ),
             ],
           ),
-        ),
-        const SizedBox(width: 14),
-        Row(
-          children: [
-            const Icon(Icons.volume_up_rounded, size: 16, color: Mf.faint),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 96,
-              child: MfScrubber(
-                fraction: model.volume,
-                thumbColor: Mf.textSoft,
-                activeColor: Mf.muted,
-                onScrub: model.setVolume,
-              ),
-            ),
-          ],
         ),
       ],
     );
@@ -220,6 +264,14 @@ class _PlayerBarState extends State<PlayerBar>
               size: 30,
               glyph: 20,
               onTap: model.next,
+            ),
+            MfIconButton(
+              icon: Icons.cast_rounded,
+              size: 30,
+              glyph: 18,
+              color: model.casting ? Mf.accentHover : null,
+              tooltip: model.casting ? '正在投屏' : '投屏',
+              onTap: () => showCastSheet(context),
             ),
           ],
         ),

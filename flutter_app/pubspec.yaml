@@ -39,6 +39,7 @@ dependencies:
   provider: ^6.1.5+1
   just_audio_windows: ^0.2.3
   flutter_lyric: ^4.1.0
+  dart_cast: ^0.7.4
 
 dev_dependencies:
   flutter_test:

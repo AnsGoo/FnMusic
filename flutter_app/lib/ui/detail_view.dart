@@ -68,6 +68,7 @@ class _DetailViewState extends State<DetailView> {
                   url: model.coverUrl(detail.coverId),
                   size: widget.wide ? 150 : 104,
                   radius: 12,
+                  circular: detail.isArtist,
                 ),
               ),
               SizedBox(width: widget.wide ? 20 : 14),
@@ -75,7 +76,9 @@ class _DetailViewState extends State<DetailView> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SectionLabel(detail.isAlbum ? '专辑' : '歌单'),
+                    SectionLabel(
+                      detail.isArtist ? '艺术家' : detail.isAlbum ? '专辑' : '歌单',
+                    ),
                     const SizedBox(height: 6),
                     Text(
                       detail.title,
@@ -99,15 +102,26 @@ class _DetailViewState extends State<DetailView> {
                     const SizedBox(height: 16),
                     Row(
                       children: [
-                        MfPrimaryButton(
-                          label: '播放全部',
-                          icon: Icons.play_arrow_rounded,
-                          height: 36,
-                          onTap: detail.tracks.isEmpty
-                              ? null
-                              : () => model.playFrom(detail.tracks, 0),
-                          enabled: detail.tracks.isNotEmpty,
-                        ),
+                        if (detail.isArtist)
+                          MfPrimaryButton(
+                            label: '播放全部歌曲',
+                            icon: Icons.play_arrow_rounded,
+                            height: 36,
+                            onTap: detail.albums.isEmpty
+                                ? null
+                                : model.playArtistAll,
+                            enabled: detail.albums.isNotEmpty,
+                          )
+                        else
+                          MfPrimaryButton(
+                            label: '播放全部',
+                            icon: Icons.play_arrow_rounded,
+                            height: 36,
+                            onTap: detail.tracks.isEmpty
+                                ? null
+                                : () => model.playFrom(detail.tracks, 0),
+                            enabled: detail.tracks.isNotEmpty,
+                          ),
                         const SizedBox(width: 10),
                         if (detail.loading) const MfSpinner(size: 16),
                       ],
@@ -120,7 +134,9 @@ class _DetailViewState extends State<DetailView> {
         ),
         const Divider(height: 1, thickness: 1, color: Mf.border),
         Expanded(
-          child: detail.loading && detail.tracks.isEmpty
+          child: detail.isArtist
+              ? _artistAlbums(model, detail)
+              : detail.loading && detail.tracks.isEmpty
               ? const Center(child: MfSpinner())
               : detail.tracks.isEmpty
               ? EmptyState(
@@ -153,6 +169,142 @@ class _DetailViewState extends State<DetailView> {
                 ),
         ),
       ],
+    );
+  }
+
+  /// The artist page's album grid — mirrors the web player's artist view.
+  Widget _artistAlbums(AppModel model, Detail detail) {
+    if (detail.loading && detail.albums.isEmpty) {
+      return const Center(child: MfSpinner());
+    }
+    if (detail.albums.isEmpty) {
+      return const EmptyState(
+        icon: Icons.album_outlined,
+        title: '暂无专辑',
+        detail: '曲库扫描完成后这里会出现这位艺术家的专辑',
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(20, 14, 20, 10),
+          child: Text(
+            '专辑',
+            style: TextStyle(
+              color: Mf.text,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.2,
+            ),
+          ),
+        ),
+        Expanded(
+          child: GridView.builder(
+            controller: _scroll,
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 196,
+              mainAxisSpacing: 20,
+              crossAxisSpacing: 18,
+              childAspectRatio: 0.74,
+            ),
+            itemCount: detail.albums.length,
+            itemBuilder: (context, index) {
+              final album = detail.albums[index];
+              return _AlbumTile(
+                title: album.name,
+                subtitle: album.trackCount > 0 ? '${album.trackCount} 首' : '',
+                coverUrl: model.coverUrl(album.coverId),
+                onTap: () => model.openAlbum(album),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// One album tile on the artist page: square cover with a play glyph that
+/// fades in on hover, then title and track count.
+class _AlbumTile extends StatefulWidget {
+  const _AlbumTile({
+    required this.title,
+    required this.subtitle,
+    required this.coverUrl,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final String? coverUrl;
+  final VoidCallback onTap;
+
+  @override
+  State<_AlbumTile> createState() => _AlbumTileState();
+}
+
+class _AlbumTileState extends State<_AlbumTile> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AspectRatio(
+              aspectRatio: 1,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  CoverImage(url: widget.coverUrl, radius: 8),
+                  if (_hovered)
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Mf.bg.withValues(alpha: 0.28),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Center(
+                          child: Icon(
+                            Icons.play_circle_fill,
+                            size: 40,
+                            color: Mf.cream,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 9),
+            Text(
+              widget.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Mf.text,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              widget.subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Mf.faint, fontSize: 11.5),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -15,6 +15,7 @@ import 'package:provider/provider.dart';
 import '../audio/player.dart';
 import '../data/models.dart';
 import '../state/app_model.dart';
+import 'cast_sheet.dart' show showCastSheet;
 import 'controls.dart';
 import 'lyrics_view.dart';
 import 'theme.dart';
@@ -153,7 +154,7 @@ class _NowPlayingPageState extends State<NowPlayingPage>
             ),
           ),
           const Spacer(),
-          const SizedBox(width: 40),
+          _CastButton(),
         ],
       ),
     );
@@ -329,29 +330,32 @@ class _NowPlayingPageState extends State<NowPlayingPage>
                         ),
                       ],
                     ),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.volume_up_rounded,
-                            size: 16,
-                            color: Mf.faint,
-                          ),
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            width: 104,
-                            child: MfScrubber(
-                              fraction: model.volume,
-                              thumbColor: Mf.textSoft,
-                              activeColor: Mf.muted,
-                              onScrub: model.setVolume,
+                    // Desktop only: touch devices use the hardware volume
+                    // keys instead of an on-screen slider.
+                    if (!isMobilePlatform)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.volume_up_rounded,
+                              size: 16,
+                              color: Mf.faint,
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: 104,
+                              child: MfScrubber(
+                                fraction: model.volume,
+                                thumbColor: Mf.textSoft,
+                                activeColor: Mf.muted,
+                                onScrub: model.setVolume,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -587,5 +591,18 @@ class _CircleButtonState extends State<_CircleButton> {
     );
     final tooltip = widget.tooltip;
     return tooltip == null ? button : Tooltip(message: tooltip, child: button);
+  }
+}
+
+/// Opens the cast sheet from the player page's top-right corner.
+class _CastButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final casting = context.watch<AppModel>().casting;
+    return _CircleButton(
+      icon: Icons.cast_outlined,
+      tooltip: casting ? '投屏中' : '投屏',
+      onTap: () => showCastSheet(context),
+    );
   }
 }

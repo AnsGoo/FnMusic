@@ -90,11 +90,36 @@ class Playlist {
   final int? trackCount;
 }
 
+/// An artist drill-down: the artist plus the albums attributed to them.
+class ArtistPage {
+  const ArtistPage({required this.artist, required this.albums});
+
+  final Artist artist;
+  final List<Album> albums;
+}
+
 class Page<T> {
   const Page(this.items, this.total);
 
   final List<T> items;
   final int total;
+}
+
+/// The three result groups of a comprehensive search (search3 in one call).
+class SearchAll {
+  const SearchAll({
+    this.tracks = const [],
+    this.albums = const [],
+    this.artists = const [],
+  });
+
+  const SearchAll.empty() : tracks = const [], albums = const [], artists = const [];
+
+  final List<Track> tracks;
+  final List<Album> albums;
+  final List<Artist> artists;
+
+  bool get isEmpty => tracks.isEmpty && albums.isEmpty && artists.isEmpty;
 }
 
 /// Everything needed to sign Music Free API and media requests.
