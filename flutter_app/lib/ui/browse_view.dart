@@ -183,6 +183,8 @@ class _Body extends StatelessWidget {
         return TrackRow(
           track: track,
           index: index,
+          coverUrl: model.coverUrl(track.coverId, size: 96),
+          fallbackCoverUrl: model.coverUrl(track.album?.id, size: 96),
           active: audio.trackId == track.id,
           playing: audio.trackId == track.id && audio.playing,
           showAlbum: wide,
@@ -212,6 +214,8 @@ class _Body extends StatelessWidget {
         return TrackRow(
           track: track,
           index: index,
+          coverUrl: model.coverUrl(track.coverId, size: 96),
+          fallbackCoverUrl: model.coverUrl(track.album?.id, size: 96),
           active: audio.trackId == track.id,
           playing: audio.trackId == track.id && audio.playing,
           showAlbum: wide,

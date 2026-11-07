@@ -68,6 +68,7 @@ class AppModel extends ChangeNotifier {
       _store = store ?? SessionStore(),
       player = player ?? FnPlayer() {
     this.player.onCompleted = _handleCompleted;
+    this.player.onFailed = _handleFailure;
   }
 
   final MusicFreeClient client;
@@ -108,6 +109,11 @@ class AppModel extends ChangeNotifier {
   Future<void>? _loadTask;
   bool _completedGuard = false;
   bool _booting = true;
+
+  /// How many tracks in a row we silently stepped over because the server
+  /// could not hand them over. Reset as soon as something plays.
+  int _failedSkips = 0;
+  static const _maxFailedSkips = 6;
 
   // ---- Getters ------------------------------------------------------------
 
@@ -175,7 +181,10 @@ class AppModel extends ChangeNotifier {
     return _queue[_queueIndex];
   }
 
-  String? coverUrl(String? coverId) => client.coverUrl(coverId);
+  /// [size] is the pixel width requested from the server; list thumbnails use
+  /// a small one so scrolling a long library does not pull full-size art.
+  String? coverUrl(String? coverId, {int size = 320}) =>
+      client.coverUrl(coverId, size: size);
 
   // ---- Session ------------------------------------------------------------
 
@@ -191,6 +200,9 @@ class AppModel extends ChangeNotifier {
     _booting = false;
     notifyListeners();
     await select(Section.tracks);
+    if (const bool.fromEnvironment('FNMUSIC_AUTOPLAY')) {
+      await playFrom(visibleTracks, 0);
+    }
   }
 
   Future<void> login(String rawUrl, String username, String password) async {
@@ -428,6 +440,7 @@ class AppModel extends ChangeNotifier {
     if (index < 0 || index >= list.length) return;
     _queue = List<Track>.from(list);
     _queueIndex = index;
+    _failedSkips = 0;
     await _startTrack(list[index]);
   }
 
@@ -435,6 +448,7 @@ class AppModel extends ChangeNotifier {
     if (_queue.isEmpty) return;
     if (_queueIndex >= _queue.length - 1) return;
     _queueIndex += 1;
+    _failedSkips = 0;
     await _startTrack(_queue[_queueIndex]);
   }
 
@@ -442,6 +456,7 @@ class AppModel extends ChangeNotifier {
     if (_queue.isEmpty) return;
     if (_queueIndex <= 0) return;
     _queueIndex -= 1;
+    _failedSkips = 0;
     await _startTrack(_queue[_queueIndex]);
   }
 
@@ -459,7 +474,7 @@ class AppModel extends ChangeNotifier {
     _lyrics = null;
     try {
       final url = client.streamUrl(track.id);
-      await player.play(
+      final started = await player.play(
         trackId: track.id,
         title: track.title,
         subtitle: track.subtitle,
@@ -469,12 +484,39 @@ class AppModel extends ChangeNotifier {
           milliseconds: (track.durationSeconds * 1000).round(),
         ),
       );
+      if (started) _failedSkips = 0;
+      debugPrint('[autoplay] started=${started} track=${track.title}');
       notifyListeners();
-      if (_lyricsVisible) unawaited(loadLyrics());
+      if (started && _lyricsVisible) unawaited(loadLyrics());
     } on MusicFreeException catch (failure) {
       _error = failure.message;
       notifyListeners();
     }
+  }
+
+  /// A track the server refused to serve. Step over it when the queue has
+  /// more, but stop after [_maxFailedSkips] so a dead media source does not
+  /// ripple through an entire playlist.
+  void _handleFailure(String trackId, String reason) {
+    debugPrint('[autoplay] failed track=$trackId reason=$reason');
+    if (player.state.value.trackId != trackId) return;
+    final hasNext = _queueIndex >= 0 && _queueIndex < _queue.length - 1;
+    if (!hasNext || _failedSkips >= _maxFailedSkips) {
+      _error = _failedSkips >= _maxFailedSkips
+          ? '连续 $_maxFailedSkips 首无法播放，请检查媒体源或服务端'
+          : reason;
+      notifyListeners();
+      return;
+    }
+    _failedSkips++;
+    // Only announce the first skip: a dead media source would otherwise throw
+    // a snackbar per track while it walks the queue.
+    if (_failedSkips == 1) {
+      _error = '《${_queue[_queueIndex].title}》$reason，正在跳过无法播放的歌曲';
+    }
+    _queueIndex++;
+    notifyListeners();
+    unawaited(_startTrack(_queue[_queueIndex]));
   }
 
   void _handleCompleted() {

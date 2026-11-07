@@ -13,6 +13,7 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
+import 'http_defaults.dart';
 import 'models.dart';
 
 class MusicFreeException implements Exception {
@@ -73,25 +74,8 @@ class MusicFreeClient {
   /// (404 / connection refused). Private hosts go direct; everything else keeps
   /// the user's proxy.
   static http.Client _defaultClient() {
-    final client = HttpClient()
-      ..findProxy = (uri) => _isPrivateHost(uri.host)
-          ? 'DIRECT'
-          : HttpClient.findProxyFromEnvironment(uri);
+    final client = HttpClient()..findProxy = proxyFor;
     return IOClient(client);
-  }
-
-  static bool _isPrivateHost(String host) {
-    if (host == 'localhost' || host.endsWith('.local')) return true;
-    final address = InternetAddress.tryParse(host);
-    if (address == null) return false;
-    if (address.isLoopback) return true;
-    final raw = address.rawAddress;
-    if (raw.length == 4) {
-      return raw[0] == 10 ||
-          (raw[0] == 192 && raw[1] == 168) ||
-          (raw[0] == 172 && raw[1] >= 16 && raw[1] <= 31);
-    }
-    return false;
   }
 
   Uri _normalize(String rawUrl) {

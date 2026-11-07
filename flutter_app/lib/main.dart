@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'data/http_defaults.dart';
 import 'state/app_model.dart';
 import 'ui/home_shell.dart';
 import 'ui/login_page.dart';
@@ -9,6 +12,7 @@ import 'ui/widgets.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  HttpOverrides.global = LocalNetworkDirect();
   runApp(const FnMusicApp());
 }
 

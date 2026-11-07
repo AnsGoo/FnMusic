@@ -23,6 +23,13 @@ env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
 APP="$APP_DIR/build/macos/Build/Products/Release/FnMusic.app"
 test -d "$APP" || { echo "missing $APP"; exit 1; }
 
+echo "==> signing"
+# Xcode rewrites App.framework (the Dart code) on every build but does not
+# always re-sign it, which breaks `codesign --verify --deep --strict`. Ad-hoc
+# signing the whole bundle is enough for local distribution.
+codesign --force --sign - --timestamp=none "$APP/Contents/Frameworks/App.framework"
+codesign --force --sign - --timestamp=none "$APP"
+
 echo "==> staging"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"

@@ -123,6 +123,14 @@ class _DetailViewState extends State<DetailView> {
                     return TrackRow(
                       track: track,
                       index: index,
+                      coverUrl: model.coverUrl(track.coverId, size: 96),
+                      fallbackCoverUrl: model.coverUrl(
+                        track.album?.id,
+                        size: 96,
+                      ),
+                      // An album's tracks all share the header art, so the
+                      // per-row thumbnail only earns its space in a playlist.
+                      showCover: !detail.isAlbum,
                       active: audio.trackId == track.id,
                       playing: audio.trackId == track.id && audio.playing,
                       showAlbum: false,

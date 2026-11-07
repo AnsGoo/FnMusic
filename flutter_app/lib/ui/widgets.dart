@@ -15,6 +15,7 @@ class CoverImage extends StatelessWidget {
     this.radius = 6,
     this.circular = false,
     this.iconSize,
+    this.onFailed,
   });
 
   final String? url;
@@ -22,6 +23,11 @@ class CoverImage extends StatelessWidget {
   final double radius;
   final bool circular;
   final double? iconSize;
+
+  /// Called when the remote image cannot be decoded — the server answers
+  /// missing art with an XML error document, so this is the usual signal to
+  /// retry against a different cover id.
+  final VoidCallback? onFailed;
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +52,7 @@ class CoverImage extends StatelessWidget {
             fadeInDuration: const Duration(milliseconds: 140),
             placeholder: (_, _) => Container(color: Fn.surfaceAlt),
             errorWidget: (_, _, _) => fallback,
+            errorListener: onFailed == null ? null : (_) => onFailed!(),
           );
 
     return ClipRRect(
@@ -63,6 +70,9 @@ class TrackRow extends StatefulWidget {
     required this.track,
     required this.index,
     required this.onTap,
+    this.coverUrl,
+    this.fallbackCoverUrl,
+    this.showCover = true,
     this.active = false,
     this.playing = false,
     this.showAlbum = true,
@@ -71,6 +81,13 @@ class TrackRow extends StatefulWidget {
   final Track track;
   final int index;
   final VoidCallback onTap;
+
+  /// Artwork carried by the song itself; servers only answer some of these.
+  final String? coverUrl;
+
+  /// Album-level artwork, used when [coverUrl] comes back empty.
+  final String? fallbackCoverUrl;
+  final bool showCover;
   final bool active;
   final bool playing;
   final bool showAlbum;
@@ -93,7 +110,7 @@ class _TrackRowState extends State<TrackRow> {
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: Container(
-          height: 52,
+          height: widget.showCover ? 60 : 52,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color: _hovered ? Fn.raised.withValues(alpha: 0.7) : Colors.transparent,
@@ -121,6 +138,15 @@ class _TrackRowState extends State<TrackRow> {
                       ),
               ),
               const SizedBox(width: 6),
+              if (widget.showCover) ...[
+                _TrackThumb(
+                  url: widget.coverUrl,
+                  fallbackUrl: widget.fallbackCoverUrl,
+                  hovered: _hovered,
+                  active: accent,
+                ),
+                const SizedBox(width: 12),
+              ],
               Expanded(
                 flex: 5,
                 child: Column(
@@ -181,6 +207,95 @@ class _TrackRowState extends State<TrackRow> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 40px cover used at the head of a track row. Hovering dims the art and
+/// reveals a play glyph; the current track keeps a thin accent ring instead.
+///
+/// Music Free tags most songs with their own artwork but only stores a file
+/// for some of them, so a failed load quietly falls back to the album cover.
+class _TrackThumb extends StatefulWidget {
+  const _TrackThumb({
+    required this.url,
+    required this.fallbackUrl,
+    required this.hovered,
+    required this.active,
+  });
+
+  final String? url;
+  final String? fallbackUrl;
+  final bool hovered;
+  final bool active;
+
+  @override
+  State<_TrackThumb> createState() => _TrackThumbState();
+}
+
+class _TrackThumbState extends State<_TrackThumb> {
+  static const _size = 44.0;
+  static const _radius = 6.0;
+
+  bool _songArtFailed = false;
+
+  String? get _url {
+    final song = widget.url;
+    if (!_songArtFailed && song != null && song.isNotEmpty) return song;
+    final album = widget.fallbackUrl;
+    return album == null || album.isEmpty ? null : album;
+  }
+
+  @override
+  void didUpdateWidget(covariant _TrackThumb old) {
+    super.didUpdateWidget(old);
+    if (old.url != widget.url) _songArtFailed = false;
+  }
+
+  void _onFailed() {
+    if (_songArtFailed || widget.fallbackUrl == null) return;
+    setState(() => _songArtFailed = true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _size,
+      height: _size,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CoverImage(
+            url: _url,
+            radius: _radius,
+            iconSize: 17,
+            onFailed: _onFailed,
+          ),
+          if (widget.hovered)
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: Fn.bg.withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(_radius),
+              ),
+              child: const Center(
+                child: Icon(
+                  Icons.play_arrow_rounded,
+                  size: 22,
+                  color: Fn.cream,
+                ),
+              ),
+            )
+          else if (widget.active)
+            IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(_radius),
+                  border: Border.all(color: Fn.accent, width: 1.2),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
