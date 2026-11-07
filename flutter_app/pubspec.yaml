@@ -19,7 +19,9 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.13.7
+  # 3.13.5 = Dart bundled with the ohos Flutter fork (oh-3.47.7-preview);
+  # official stable ships 3.13.7. Keep the floor at the ohos version.
+  sdk: ^3.13.5
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -35,11 +37,43 @@ dependencies:
   crypto: ^3.0.8
   shared_preferences: ^2.5.6
   just_audio: ^0.10.6
-  cached_network_image: ^4.0.6
+  # 4.x 依赖 pub.dev 新拆分的 material_ui/cupertino_ui 包，其 switch 不认识
+  # TargetPlatform.ohos，鸿蒙 fork 编不过且社区尚无 ohos 适配版 → 锁在 3.x。
+  cached_network_image: 3.4.1
   provider: ^6.1.5+1
   just_audio_windows: ^0.2.3
   flutter_lyric: ^4.1.0
   dart_cast: ^0.7.4
+
+# 鸿蒙（HarmonyOS NEXT）适配：平台通道类插件必须用 ohos 实现，否则运行即
+# MissingPluginException。纯 Dart 包（http/crypto/provider/dart_cast/
+# flutter_lyric/cached_network_image 本体）无需覆盖。
+# 仓库：openharmony-tpc（AtomGit 官方 SIG）、CPF-Flutter（GitCode 社区适配）。
+dependency_overrides:
+  # ohos 版 just_audio 连带的 git 版 audio_session 引用 TargetPlatform.ohos
+  # （仅鸿蒙 fork 有该枚举），会把官方 SDK 的 analyze/测试/iOS 构建全搞挂。
+  # pub.dev 0.2.4 不做平台枚举判断，两个工具链都能编译；鸿蒙上仅损失
+  # AVSession 系统媒体面板集成，播放功能不受影响。
+  audio_session: 0.2.4
+  just_audio:
+    git:
+      url: https://gitcode.com/CPF-Flutter/fluttertpc_just_audio.git
+      path: just_audio
+      ref: 0.10.5-ohos-1.0.0
+  shared_preferences:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/shared_preferences/shared_preferences
+      ref: master
+  path_provider:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/path_provider/path_provider
+      ref: master
+  sqflite:
+    git:
+      url: https://gitcode.com/openharmony-sig/flutter_sqflite.git
+      path: sqflite
 
 dev_dependencies:
   flutter_test:

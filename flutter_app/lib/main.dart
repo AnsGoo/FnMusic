@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'data/http_defaults.dart';
@@ -11,6 +12,12 @@ import 'ui/theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Let the window follow the system auto-rotate toggle. On OpenHarmony the
+  // default "unspecified" window orientation does not track rotation on
+  // phones; an explicit all-orientations request maps to
+  // AUTO_ROTATION_RESTRICTED (rotate when the system toggle allows it).
+  // Android/iOS already behave this way by default; desktop ignores it.
+  SystemChrome.setPreferredOrientations(DeviceOrientation.values);
   HttpOverrides.global = LocalNetworkDirect();
   runApp(const MusicFlyApp());
 }

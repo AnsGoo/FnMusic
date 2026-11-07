@@ -8,8 +8,14 @@ import 'package:flutter/material.dart';
 
 /// Touch devices handle volume with their hardware keys, so volume widgets
 /// are hidden there.
+///
+/// OpenHarmony (HarmonyOS) reports its own operating system name ("ohos")
+/// from dart:io, so it must be matched explicitly — isAndroid/isIOS are both
+/// false there and the app would otherwise fall into the desktop layout
+/// (fixed card widths, visible volume slider, 10 entries per section).
 final bool isMobilePlatform =
-    !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+    !kIsWeb &&
+    (Platform.isAndroid || Platform.isIOS || Platform.operatingSystem == 'ohos');
 
 class Mf {
   const Mf._();
