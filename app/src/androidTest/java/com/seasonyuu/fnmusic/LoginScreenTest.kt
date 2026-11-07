@@ -29,7 +29,7 @@ class LoginScreenTest {
     @get:Rule val compose = createComposeRule()
 
     @Test fun savedFormCanBeEditedAndSubmitted() {
-        val form = mutableStateOf(LoginForm(fnId = "test-fnid", username = "test-user", password = "test-password"))
+        val form = mutableStateOf(LoginForm(musicFreeUrl = "http://192.168.1.10:14533", username = "test-user", password = "test-password"))
         var submitted: ConnectionProfile? = null
         var submittedPassword = ""
         compose.setContent {
@@ -48,13 +48,13 @@ class LoginScreenTest {
         compose.onNodeWithText("登录音乐库").performScrollTo().performClick()
         compose.runOnIdle {
             assertEquals("edited-user", submitted?.username)
-            assertEquals(Endpoint.FnConnect("test-fnid"), submitted?.endpoint)
+            assertEquals(Endpoint.MusicFree("http://192.168.1.10:14533"), submitted?.endpoint)
             assertEquals("test-password", submittedPassword)
         }
     }
 
-    @Test fun connectionModesRetainIndependentAddressesAndRenderFlowingBackground() {
-        val form = mutableStateOf(LoginForm(fnId = "test-fnid", directUrl = "https://nas.example/music/"))
+    @Test fun addressRoundTripsAndFlowingBackgroundMoves() {
+        val form = mutableStateOf(LoginForm(musicFreeUrl = "http://192.168.1.10:14533"))
         compose.mainClock.autoAdvance = false
         compose.setContent {
             FnMusicTheme { ConnectionScreen(SessionState.Unresolved, { _, _ -> }, form.value, { form.value = it }) }
@@ -67,23 +67,10 @@ class LoginScreenTest {
         assertFalse("The shared light background must move", first.sameAs(second))
         val context = ApplicationProvider.getApplicationContext<Context>()
         File(context.cacheDir, "login-preview.png").outputStream().use { second.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        compose.onNodeWithText("NAS 直连").performClick()
-        compose.mainClock.advanceTimeBy(320)
-        compose.onNodeWithContentDescription("飞牛音乐地址").assertTextContains("https://nas.example/music/")
-        compose.onNodeWithText("FN Connect").performClick()
-        compose.mainClock.advanceTimeBy(320)
-        compose.onNodeWithContentDescription("FN ID").assertTextContains("test-fnid")
-        // Reverse direction before the transition finishes, then edit the settled destination.
-        compose.onNodeWithText("NAS 直连").performClick()
-        compose.mainClock.advanceTimeBy(80)
-        compose.onNodeWithText("FN Connect").performClick()
-        compose.mainClock.advanceTimeBy(80)
-        compose.onNodeWithText("NAS 直连").performClick()
-        compose.mainClock.advanceTimeBy(320)
-        compose.onNodeWithContentDescription("飞牛音乐地址").performTextReplacement("https://edited.example/music/")
+        compose.onNodeWithContentDescription("Music Free 地址").assertTextContains("http://192.168.1.10:14533")
+        compose.onNodeWithContentDescription("Music Free 地址").performTextReplacement("https://edited.example:14533")
         compose.runOnIdle {
-            assertEquals("test-fnid", form.value.fnId)
-            assertEquals("https://edited.example/music/", form.value.directUrl)
+            assertEquals("https://edited.example:14533", form.value.musicFreeUrl)
         }
     }
 

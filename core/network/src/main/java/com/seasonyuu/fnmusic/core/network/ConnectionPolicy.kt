@@ -13,7 +13,25 @@ import java.io.IOException
 import java.util.concurrent.atomic.AtomicReference
 
 class ConnectionPolicy {
-    suspend fun validateAndNormalize(value: String, allowPrivateLanHttp: Boolean): HttpUrl = withContext(Dispatchers.IO) {
+    /** fnOS endpoints live under a fixed `/music/` prefix. */
+    suspend fun validateAndNormalize(value: String, allowPrivateLanHttp: Boolean): HttpUrl {
+        val url = validateUrl(value, allowPrivateLanHttp)
+        val path = url.encodedPath.trimEnd('/').let { current ->
+            when {
+                current.endsWith("/music") -> "$current/"
+                current.isBlank() || current == "/" -> "/music/"
+                else -> "$current/music/"
+            }
+        }
+        return url.newBuilder().encodedPath(path).query(null).fragment(null).build()
+    }
+
+    /** Other library backends serve their API from the root; keep the entered path. */
+    suspend fun validatePlain(value: String, allowPrivateLanHttp: Boolean): HttpUrl =
+        validateUrl(value, allowPrivateLanHttp)
+            .newBuilder().query(null).fragment(null).build()
+
+    private suspend fun validateUrl(value: String, allowPrivateLanHttp: Boolean): HttpUrl = withContext(Dispatchers.IO) {
         val url = runCatching { value.trim().toHttpUrl() }
             .getOrElse { throw MusicError.UnsafeConnection("请输入完整的 HTTP 或 HTTPS 地址") }
         if (url.username.isNotEmpty() || url.password.isNotEmpty()) {
@@ -27,14 +45,7 @@ class ConnectionPolicy {
                 throw MusicError.UnsafeConnection("HTTP 地址必须只解析到回环、私网、链路本地或 IPv6 ULA")
             }
         }
-        val path = url.encodedPath.trimEnd('/').let { current ->
-            when {
-                current.endsWith("/music") -> "$current/"
-                current.isBlank() || current == "/" -> "/music/"
-                else -> "$current/music/"
-            }
-        }
-        url.newBuilder().encodedPath(path).query(null).fragment(null).build()
+        url
     }
 
     internal fun InetAddress.isPrivateAddress(): Boolean {

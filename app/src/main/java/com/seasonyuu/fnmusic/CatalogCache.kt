@@ -73,6 +73,7 @@ class CatalogCache(context: Context, private val json: Json) {
             when (val endpoint = endpoint) {
             is Endpoint.FnConnect -> "fn:${endpoint.fnId}"
             is Endpoint.Direct -> "direct:${endpoint.baseUrl}"
+            is Endpoint.MusicFree -> "musicfree:${endpoint.baseUrl}"
             },
         )
         append('|')

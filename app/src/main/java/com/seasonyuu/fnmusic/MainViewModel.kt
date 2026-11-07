@@ -73,6 +73,7 @@ class MainViewModel @Inject constructor(private val graph: AppGraph, private val
         val endpoint = when (val value = ready.profile.endpoint) {
             is Endpoint.FnConnect -> "fn:${value.fnId}"
             is Endpoint.Direct -> "direct:${value.baseUrl.trimEnd('/')}"
+            is Endpoint.MusicFree -> "musicfree:${value.baseUrl.trimEnd('/')}"
         }
         return "${endpoint.length}:$endpoint|${ready.user?.id ?: ready.profile.username}"
     }
@@ -140,6 +141,7 @@ class MainViewModel @Inject constructor(private val graph: AppGraph, private val
     private fun ConnectionProfile.lyricsScope(): String = when (val value = endpoint) {
         is Endpoint.FnConnect -> "fn:${value.fnId}"
         is Endpoint.Direct -> "direct:${value.baseUrl}"
+        is Endpoint.MusicFree -> "musicfree:${value.baseUrl}"
     } + "|" + username
 
     val lyricsActions: LyricsActions = object : LyricsActions {
@@ -398,13 +400,17 @@ class MainViewModel @Inject constructor(private val graph: AppGraph, private val
         mutableMusic.value = mutableMusic.value.copy(playlistBusy = true, playlistMessage = null)
         try {
             val owner = playlistAccount()
+            // Music Free applies a cover to an existing playlist, so there is no
+            // pre-create upload to call. Creating without a cover is better than
+            // failing the whole flow on the fnOS-only static-cover endpoint.
+            val canUploadCover = (session.value as? SessionState.Ready)?.profile?.endpoint !is Endpoint.MusicFree
             val coverSelection = "$owner|${photoUri ?: coverId.orEmpty()}"
             val uploadedCoverId = savedState.get<String>("playlistCreateCoverId")
                 ?.takeIf { savedState.get<String>("playlistCreateCoverSelection") == coverSelection }
             val created = createPlaylistWithCover(
                 name = normalized,
-                defaultCoverId = coverId,
-                photoUri = photoUri,
+                defaultCoverId = coverId.takeIf { canUploadCover },
+                photoUri = photoUri.takeIf { canUploadCover },
                 prepare = graph.playlistCoverFiles::prepare,
                 upload = graph.playlistCoverFiles::upload,
                 uploadDefault = graph.playlistCoverFiles::uploadDefault,

@@ -19,9 +19,22 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
+/**
+ * Pluggable media addressing. The default fnOS paths live in [BaseUrlProvider];
+ * an alternative library backend can supply its own self-authenticated URLs.
+ * Absolute URLs pass through [DynamicBaseUrlInterceptor] untouched.
+ */
+interface MediaUrlResolver {
+    fun streamUrl(trackId: String): String
+    fun coverUrl(coverId: String, size: Int): String?
+}
+
 class BaseUrlProvider {
     private val mutable = MutableStateFlow<HttpUrl?>(null)
     val value: StateFlow<HttpUrl?> = mutable
+
+    @Volatile
+    var mediaUrls: MediaUrlResolver? = null
 
     fun set(url: HttpUrl) {
         mutable.value = url
@@ -30,23 +43,25 @@ class BaseUrlProvider {
     fun require(): HttpUrl = mutable.value ?: throw MusicError.Protocol("音乐服务地址尚未准备好")
 
     fun streamUrl(trackGuid: String): String =
-        require().newBuilder()
-            .addPathSegments("api/v1/track/stream")
-            .addQueryParameter("guid", trackGuid)
-            .build()
-            .toString()
+        mediaUrls?.streamUrl(trackGuid)
+            ?: require().newBuilder()
+                .addPathSegments("api/v1/track/stream")
+                .addQueryParameter("guid", trackGuid)
+                .build()
+                .toString()
 
-    fun coverUrl(coverId: String, size: Int): String =
-        require().newBuilder()
-            .addPathSegments("api/v1/static/cover")
-            .addQueryParameter("coverId", coverId)
-            // The server currently supports 120px, 160px, and 640px cover
-            // variants. Canonicalize callers to those values so the same
-            // image does not occupy duplicate cache entries for 320/360/800/
-            // 1600px URLs that all return the 640px variant.
-            .addQueryParameter("size", normalizeCoverSize(size).toString())
-            .build()
-            .toString()
+    fun coverUrl(coverId: String, size: Int): String? =
+        mediaUrls?.coverUrl(coverId, size)
+            ?: require().newBuilder()
+                .addPathSegments("api/v1/static/cover")
+                .addQueryParameter("coverId", coverId)
+                // The server currently supports 120px, 160px, and 640px cover
+                // variants. Canonicalize callers to those values so the same
+                // image does not occupy duplicate cache entries for 320/360/800/
+                // 1600px URLs that all return the 640px variant.
+                .addQueryParameter("size", normalizeCoverSize(size).toString())
+                .build()
+                .toString()
 
     private fun normalizeCoverSize(size: Int): Int = when {
         size <= SMALL_COVER_SIZE -> SMALL_COVER_SIZE
@@ -181,6 +196,9 @@ class NetworkRuntime {
         .build()
 
     val api: MusicApi = createApi(httpClient)
+
+    /** Stable handle handed to repositories; its delegate switches with the active source. */
+    val router = MusicApiRouter(api)
 
     // Recovery runs while catalog requests occupy dispatcher slots. Give its
     // bypassed auth calls their own slots so a full queue cannot deadlock login.

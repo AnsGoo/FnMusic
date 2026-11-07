@@ -7,6 +7,11 @@ import com.seasonyuu.fnmusic.core.model.MusicError
 import com.seasonyuu.fnmusic.core.model.SessionRepository
 import com.seasonyuu.fnmusic.core.model.SessionState
 import com.seasonyuu.fnmusic.core.model.MusicUser
+import com.seasonyuu.fnmusic.core.network.musicfree.MusicFreeApi
+import com.seasonyuu.fnmusic.core.network.musicfree.MusicFreeAuth
+import com.seasonyuu.fnmusic.core.network.musicfree.MusicFreeAuthGateway
+import com.seasonyuu.fnmusic.core.network.musicfree.MusicFreeClient
+import com.seasonyuu.fnmusic.core.network.musicfree.MusicFreeUrls
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -38,6 +43,8 @@ class SessionCoordinator(
             directUrl = (it.profile.endpoint as? Endpoint.Direct)?.baseUrl.orEmpty(),
             username = it.profile.username,
             allowPrivateLanHttp = it.profile.allowPrivateLanHttp,
+            useMusicFree = it.profile.endpoint is Endpoint.MusicFree,
+            musicFreeUrl = (it.profile.endpoint as? Endpoint.MusicFree)?.baseUrl.orEmpty(),
         ).also(vault::saveLoginForm)
     } ?: LoginForm())
     val loginForm: StateFlow<LoginForm> = mutableLoginForm.asStateFlow()
@@ -54,8 +61,9 @@ class SessionCoordinator(
     }
 
     override suspend fun connect(profile: ConnectionProfile, password: CharArray) {
+        var plainPassword = ""
         val passwordHash = try {
-            val plainPassword = password.concatToString()
+            plainPassword = password.concatToString()
             updateLoginForm(loginForm.value.copy(
                 useDirectConnection = profile.endpoint is Endpoint.Direct,
                 fnId = (profile.endpoint as? Endpoint.FnConnect)?.fnId ?: loginForm.value.fnId,
@@ -63,12 +71,14 @@ class SessionCoordinator(
                 username = profile.username,
                 password = plainPassword,
                 allowPrivateLanHttp = profile.allowPrivateLanHttp,
+                useMusicFree = profile.endpoint is Endpoint.MusicFree,
+                musicFreeUrl = (profile.endpoint as? Endpoint.MusicFree)?.baseUrl ?: loginForm.value.musicFreeUrl,
             ))
             plainPassword.sha256()
         } finally {
             Arrays.fill(password, '\u0000')
         }
-        connectWithHash(profile, passwordHash, null)
+        connectWithHash(profile, passwordHash, null, plainPassword)
     }
 
     override suspend fun reconnect() {
@@ -77,12 +87,17 @@ class SessionCoordinator(
             mutableState.value = SessionState.Unresolved
             return
         }
-        connectWithHash(saved.profile, saved.passwordHash, saved.token)
+        connectWithHash(saved.profile, saved.passwordHash, saved.token, null)
     }
 
-    private suspend fun connectWithHash(profile: ConnectionProfile, passwordHash: String, existingToken: String?) {
+    private suspend fun connectWithHash(
+        profile: ConnectionProfile,
+        passwordHash: String,
+        existingToken: String?,
+        plainPassword: String?,
+    ) {
         try {
-            connectionMutex.withLock { establish(profile, passwordHash, existingToken) }
+            connectionMutex.withLock { establish(profile, passwordHash, existingToken, plainPassword) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -93,7 +108,7 @@ class SessionCoordinator(
     private suspend fun recoverForRequest(): Boolean = connectionMutex.withLock {
         val saved = vault.load() ?: return@withLock false
         try {
-            establish(saved.profile, saved.passwordHash, saved.token)
+            establish(saved.profile, saved.passwordHash, saved.token, null)
             true
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -103,9 +118,22 @@ class SessionCoordinator(
         }
     }
 
-    private suspend fun establish(profile: ConnectionProfile, passwordHash: String, existingToken: String?) {
+    private suspend fun establish(
+        profile: ConnectionProfile,
+        passwordHash: String,
+        existingToken: String?,
+        plainPassword: String?,
+    ) {
         mutableState.value = SessionState.Locating
         network.cookieJar.clear()
+        // Every connection starts from the fnOS backend; a Music Free profile
+        // switches the router and media URLs once its session is established.
+        network.baseUrlProvider.mediaUrls = null
+        network.router.delegate = network.api
+        if (profile.endpoint is Endpoint.MusicFree) {
+            establishMusicFree(profile, passwordHash, existingToken, plainPassword)
+            return
+        }
         network.activateBaseUrl("https://music.invalid/".toHttpUrl(), allowPrivateLanHttp = false)
         val baseUrl = when (val endpoint = profile.endpoint) {
             is Endpoint.FnConnect -> {
@@ -115,6 +143,7 @@ class SessionCoordinator(
                 resolved
             }
             is Endpoint.Direct -> policy.validateAndNormalize(endpoint.baseUrl, profile.allowPrivateLanHttp)
+            is Endpoint.MusicFree -> error("Music Free is handled before endpoint resolution")
         }
         network.activateBaseUrl(baseUrl, profile.allowPrivateLanHttp)
 
@@ -142,6 +171,48 @@ class SessionCoordinator(
             login.user?.toMusicUser(), config.mediasrvVersion)
     }
 
+    /**
+     * Music Free uses a JWT for API calls and Subsonic u/t/s credentials for
+     * media URLs. Both are derived at login and stored in the encrypted vault
+     * so a cold start can restore the session without the plain password.
+     * FN Connect, authx signing, the /music/ prefix and music-token cookies are
+     * fnOS-only and deliberately skipped here.
+     */
+    private suspend fun establishMusicFree(
+        profile: ConnectionProfile,
+        passwordHash: String,
+        existingToken: String?,
+        plainPassword: String?,
+    ) {
+        val endpoint = profile.endpoint as Endpoint.MusicFree
+        val baseUrl = policy.validatePlain(endpoint.baseUrl, profile.allowPrivateLanHttp)
+        // Authorises plaintext HTTP on the private LAN and publishes the base URL.
+        network.activateBaseUrl(baseUrl, profile.allowPrivateLanHttp)
+
+        val auth = MusicFreeAuth.decode(network.json, existingToken)
+            ?: MusicFreeAuthGateway.login(
+                http = network.httpClient,
+                json = network.json,
+                baseUrl = baseUrl,
+                username = profile.username,
+                password = plainPassword ?: throw MusicError.Authentication("Music Free 登录已过期，请重新登录"),
+            )
+
+        val client = MusicFreeClient(network.httpClient, network.json, baseUrl) { auth }
+        network.baseUrlProvider.mediaUrls = MusicFreeUrls(baseUrl) { auth }
+        network.router.delegate = MusicFreeApi(client)
+
+        vault.save(SavedCredentials(profile, passwordHash, auth.encode(network.json)))
+        mutableState.value = SessionState.MusicAuthenticated
+        mutableState.value = SessionState.Ready(
+            profile = profile,
+            serverName = "Music Free",
+            serverVersion = null,
+            user = MusicUser(id = profile.username, name = profile.username),
+            mediasrvVersion = null,
+        )
+    }
+
     private suspend fun authenticate(profile: ConnectionProfile, passwordHash: String, baseUrl: HttpUrl): LoginData {
         val login = network.sessionApi.passwordLogin(LoginRequest(profile.username, passwordHash, vault.deviceId())).requireData()
         network.cookieJar.setMusicToken(baseUrl, login.userToken)
@@ -149,10 +220,22 @@ class SessionCoordinator(
         return login
     }
 
-    suspend fun currentUser(): MusicUser = network.sessionApi.currentUser().requireData().toMusicUser()
+    suspend fun currentUser(): MusicUser {
+        val ready = mutableState.value as? SessionState.Ready
+        // Music Free has no fnOS user/me endpoint; the identity is already known
+        // from the login response, so avoid a request to a nonexistent path.
+        if (ready?.profile?.endpoint is Endpoint.MusicFree) {
+            return ready.user ?: MusicUser(ready.profile.username, ready.profile.username)
+        }
+        return network.sessionApi.currentUser().requireData().toMusicUser()
+    }
 
     suspend fun changePassword(password: CharArray) = connectionMutex.withLock {
         check(mutableState.value is SessionState.Ready) { "请先登录音乐账户" }
+        if ((mutableState.value as SessionState.Ready).profile.endpoint is Endpoint.MusicFree) {
+            Arrays.fill(password, '\u0000')
+            throw MusicError.Protocol("Music Free 账户请在服务端修改密码")
+        }
         try {
             require(password.isNotEmpty()) { "请输入新密码" }
             network.accountMutationApi.changePassword(ChangePasswordRequest(password.concatToString().sha256())).requireSuccess()
@@ -186,6 +269,8 @@ class SessionCoordinator(
 
     override suspend fun logout(clearCredentials: Boolean) = connectionMutex.withLock {
         network.cookieJar.clear()
+        network.baseUrlProvider.mediaUrls = null
+        network.router.delegate = network.api
         if (clearCredentials) vault.clearCredentials()
         mutableState.value = SessionState.Unresolved
     }

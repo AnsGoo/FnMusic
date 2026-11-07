@@ -29,7 +29,15 @@ sealed interface Endpoint {
     @Serializable
     @SerialName("direct")
     data class Direct(val baseUrl: String) : Endpoint
+
+    /** A Music Free server reached over its OpenSubsonic / REST API. */
+    @Serializable
+    @SerialName("music_free")
+    data class MusicFree(val baseUrl: String) : Endpoint
 }
+
+/** Which library backend the connection screen is currently showing. */
+enum class LibrarySource { FnConnect, Direct, MusicFree }
 
 @Serializable
 data class ConnectionProfile(
@@ -298,7 +306,18 @@ data class LoginForm(
     val username: String = "",
     val password: String = "",
     val allowPrivateLanHttp: Boolean = false,
+    // Music Free is the only source the connection screen offers, so a fresh
+    // form starts there. The fnOS fields stay so saved forms keep decoding.
+    val useMusicFree: Boolean = true,
+    val musicFreeUrl: String = "",
 ) {
+    val source: LibrarySource
+        get() = when {
+            useMusicFree -> LibrarySource.MusicFree
+            useDirectConnection -> LibrarySource.Direct
+            else -> LibrarySource.FnConnect
+        }
+
     // Do not expose passwords through incidental logging.
     override fun toString(): String = "LoginForm(redacted)"
 }

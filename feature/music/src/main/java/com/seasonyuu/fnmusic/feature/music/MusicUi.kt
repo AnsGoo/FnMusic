@@ -1137,7 +1137,7 @@ private fun PermanentSidebar(selected: MusicDestination, onSelect: (MusicDestina
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(8.dp)) {
-            Image(painterResource(R.drawable.fn_music_logo), null, Modifier.size(32.dp))
+            Image(painterResource(R.drawable.music_free_logo), null, Modifier.size(32.dp))
             Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.height(12.dp))
@@ -1955,7 +1955,16 @@ private fun ArtistGridScreen(artists: LazyPagingItems<Artist>, state: MusicUiSta
                         },
                     ) {
                         Text(artist.name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 8.dp))
-                        Text("${artist.trackCount} 首歌曲", color = FnTextSecondary, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 8.dp))
+                        // Some backends only report albums reliably; showing a
+                        // bare "0 首歌曲" next to a non-empty artist is worse
+                        // than naming what is actually known.
+                        Text(
+                            if (artist.trackCount == 0 && artist.albumCount > 0) "${artist.albumCount} 张专辑"
+                            else "${artist.trackCount} 首歌曲",
+                            color = FnTextSecondary,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                        )
                     }
                 }
             }

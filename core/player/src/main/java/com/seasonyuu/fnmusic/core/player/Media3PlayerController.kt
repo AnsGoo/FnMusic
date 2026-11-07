@@ -53,6 +53,7 @@ class Media3PlayerController(context: Context) : PlayerController {
     private var observedCurrent: PlayableTrack? = null
     private var playbackSessionId = 0L
     private var isRoaming = false
+    private var unplayableSkips = 0
     private var pendingTimeline = false
     private var pendingRemovalOrder: List<String>? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -73,10 +74,17 @@ class Media3PlayerController(context: Context) : PlayerController {
     }
 
     private val listener = object : Player.Listener {
-        override fun onEvents(player: Player, events: Player.Events) = publishState()
+        override fun onEvents(player: Player, events: Player.Events) {
+            // A track that actually started playing proves the source is readable,
+            // so the skip budget refills for the next run of broken files.
+            if (player.isPlaying) unplayableSkips = 0
+            publishState()
+        }
+
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
             val qualityError = generateSequence<Throwable>(error) { it.cause }.mapNotNull { it.message }
                 .firstOrNull { it.startsWith("服务器无法提供标准音质") }
+            if (qualityError == null && skipUnplayable(error)) return
             mutableState.value = mutableState.value.copy(error = qualityError ?: "播放失败，请检查网络后重试")
         }
     }
@@ -89,6 +97,7 @@ class Media3PlayerController(context: Context) : PlayerController {
         playbackHistory = emptyList()
         observedCurrent = queue[startIndex.coerceIn(queue.indices)]
         this.isRoaming = isRoaming
+        unplayableSkips = 0
         publishPendingState(
             startIndex,
             0L,
@@ -134,6 +143,7 @@ class Media3PlayerController(context: Context) : PlayerController {
         playbackHistory = emptyList()
         observedCurrent = queue[startIndex.coerceIn(queue.indices)]
         this.isRoaming = isRoaming
+        unplayableSkips = 0
         publishPendingState(
             startIndex,
             positionMs,
@@ -459,6 +469,34 @@ class Media3PlayerController(context: Context) : PlayerController {
         }, ContextCompat.getMainExecutor(appContext))
     }
 
+    /**
+     * Steps over a source the player cannot read instead of parking on an error.
+     *
+     * This matters most in roam mode: a roam window is random, so a single dead
+     * file would otherwise end the session. Network failures are deliberately not
+     * skipped — a dropped connection says nothing about the next track. A run of
+     * failures means the queue itself is broken, so the error must surface once
+     * the budget is spent.
+     */
+    private fun skipUnplayable(error: androidx.media3.common.PlaybackException): Boolean {
+        if (!error.isUnreadableSource()) return false
+        if (unplayableSkips >= MAX_UNPLAYABLE_SKIPS) {
+            android.util.Log.w(TAG, "unplayable sources exceeded $MAX_UNPLAYABLE_SKIPS, surfacing the error")
+            return false
+        }
+        val controller = runCatching { controllerFuture.get() }.getOrNull() ?: return false
+        if (!controller.hasNextMediaItem()) return false
+        unplayableSkips++
+        android.util.Log.w(
+            TAG,
+            "skipping unreadable source code=${error.errorCode} at index=${controller.currentMediaItemIndex}",
+        )
+        controller.seekToNextMediaItem()
+        controller.prepare()
+        controller.play()
+        return true
+    }
+
     private fun withController(block: (MediaController) -> Unit) {
         controllerFuture.addListener({ runCatching { block(controllerFuture.get()) } }, ContextCompat.getMainExecutor(appContext))
     }
@@ -475,3 +513,27 @@ internal fun playbackStatus(
     playbackState == Player.STATE_IDLE -> PlaybackStatus.Idle
     else -> PlaybackStatus.Paused
 }
+
+/** How many consecutive unreadable sources are skipped before the error surfaces. */
+private const val MAX_UNPLAYABLE_SKIPS = 20
+
+private const val TAG = "Media3Player"
+
+/**
+ * Source-side failures another queue item can plausibly recover from: missing
+ * files, rejected responses, containers no extractor understands, and formats
+ * the device cannot decode. Connection loss is excluded on purpose.
+ */
+private fun androidx.media3.common.PlaybackException.isUnreadableSource(): Boolean =
+    errorCode in setOf(
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE,
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+    )

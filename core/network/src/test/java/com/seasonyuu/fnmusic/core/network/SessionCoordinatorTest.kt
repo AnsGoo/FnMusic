@@ -110,7 +110,7 @@ class SessionCoordinatorTest {
         val profile = ConnectionProfile(Endpoint.Direct("https://nas.example/music/"), "legacy-user", true)
         val vault = FakeSessionVault(SavedCredentials(profile, "irreversible-hash", "old-token"))
         val coordinator = SessionCoordinator(NetworkRuntime(), vault)
-        assertEquals(LoginForm(useDirectConnection = true, directUrl = "https://nas.example/music/", username = "legacy-user", allowPrivateLanHttp = true), coordinator.loginForm.value)
+        assertEquals(LoginForm(useDirectConnection = true, directUrl = "https://nas.example/music/", username = "legacy-user", allowPrivateLanHttp = true, useMusicFree = false), coordinator.loginForm.value)
         assertEquals(coordinator.loginForm.value, vault.form)
     }
 

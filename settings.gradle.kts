@@ -28,6 +28,10 @@ include(
     ":feature:music",
 )
 
+// Desktop (macOS) client. Reuses the JVM-only model module and talks to the
+// Music Free REST API directly; no Android dependency.
+include(":desktop")
+
 // Host-owned adapters keep the pinned upstream submodules unchanged.
 include(":accompanist-lyrics-core", ":accompanist-lyrics-ui")
 project(":accompanist-lyrics-core").projectDir = file("third_party/adapters/lyrics-core")

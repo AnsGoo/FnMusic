@@ -1,50 +1,27 @@
 package com.seasonyuu.fnmusic.feature.session
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.Cloud
-import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -65,9 +42,6 @@ import com.seasonyuu.fnmusic.core.model.Endpoint
 import com.seasonyuu.fnmusic.core.model.LoginForm
 import com.seasonyuu.fnmusic.core.model.SessionState
 
-private val LoginSwitchEasing = CubicBezierEasing(.2f, 0f, 0f, 1f)
-private const val LoginSwitchDuration = 260
-
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun ConnectionScreen(
@@ -80,24 +54,18 @@ fun ConnectionScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
-    val layoutDirection = LocalLayoutDirection.current
-    val slideDistance = with(LocalDensity.current) { 12.dp.roundToPx() }
-    val tabPosition by animateFloatAsState(
-        targetValue = if (form.useDirectConnection) 1f else 0f,
-        animationSpec = tween(LoginSwitchDuration, easing = LoginSwitchEasing),
-        label = "login-tab-indicator",
-    )
     val connecting = state is SessionState.Restoring || state is SessionState.Locating ||
         state is SessionState.RelaySelected || state is SessionState.RelayActive ||
         state is SessionState.MusicAuthenticated
     val canSubmit = !connecting && form.username.isNotBlank() && form.password.isNotBlank() &&
-        if (form.useDirectConnection) form.directUrl.isNotBlank() else form.fnId.length >= 6
+        form.musicFreeUrl.isNotBlank()
     val submit = {
         if (canSubmit) {
             passwordVisible = false
             focus.clearFocus()
             keyboard?.hide()
-            val endpoint = if (form.useDirectConnection) Endpoint.Direct(form.directUrl.trim()) else Endpoint.FnConnect(form.fnId.trim())
+            // Music Free is the only supported source.
+            val endpoint: Endpoint = Endpoint.MusicFree(form.musicFreeUrl.trim())
             onConnect(ConnectionProfile(endpoint, form.username.trim(), form.allowPrivateLanHttp), form.password.toCharArray())
         }
     }
@@ -116,10 +84,16 @@ fun ConnectionScreen(
         ) {
             Column(Modifier.widthIn(max = 420.dp).fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Image(painterResource(R.drawable.fn_music_logo), null, Modifier.size(64.dp))
+                    Image(painterResource(R.drawable.music_free_logo), null, Modifier.size(64.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("飞牛音乐", fontSize = 32.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                        Text("你的私人音乐库，随身播放", style = MaterialTheme.typography.bodyMedium, color = FnTextSecondary)
+                        Text(
+                            "Music Free",
+                            fontSize = 32.sp, fontWeight = FontWeight.SemiBold, color = Color.White,
+                        )
+                        Text(
+                            "连接你的个人音乐服务器",
+                            style = MaterialTheme.typography.bodyMedium, color = FnTextSecondary,
+                        )
                     }
                 }
                 Spacer(Modifier.height(36.dp))
@@ -133,71 +107,16 @@ fun ConnectionScreen(
                         Text(connectionMessage(state), color = FnTextSecondary)
                     }
                 } else {
-                    Row(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-                            .background(Color.White.copy(alpha = .06f)).padding(4.dp)
-                            .drawBehind {
-                                val position = if (layoutDirection == LayoutDirection.Ltr) tabPosition else 1f - tabPosition
-                                drawRoundRect(
-                                    color = Color.White.copy(alpha = .13f),
-                                    topLeft = Offset(size.width / 2f * position, 0f),
-                                    size = Size(size.width / 2f, size.height),
-                                    cornerRadius = CornerRadius(12.dp.toPx()),
-                                )
-                            }.selectableGroup(),
-                    ) {
-                        listOf(false, true).forEach { direct ->
-                            val selected = form.useDirectConnection == direct
-                            Row(
-                                Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
-                                    .selectable(selected, role = Role.Tab, onClick = { onFormChange(form.copy(useDirectConnection = direct)) })
-                                    .heightIn(min = 48.dp).padding(horizontal = 8.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                            ) {
-                                Icon(if (direct) Icons.Rounded.Dns else Icons.Rounded.Cloud, null, Modifier.size(18.dp), tint = if (selected) Color.White else FnTextSecondary)
-                                Text(if (direct) "NAS 直连" else "FN Connect", fontSize = 14.sp, color = if (selected) Color.White else FnTextSecondary)
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(24.dp))
                     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                        AnimatedContent(
-                            targetState = form.useDirectConnection,
-                            modifier = Modifier.fillMaxWidth(),
-                            contentAlignment = Alignment.TopStart,
-                            transitionSpec = {
-                                val direction = (if (targetState) 1 else -1) *
-                                    (if (layoutDirection == LayoutDirection.Ltr) 1 else -1)
-                                ((fadeIn(tween(220, delayMillis = 40)) + slideInHorizontally(
-                                    tween(LoginSwitchDuration, easing = LoginSwitchEasing),
-                                ) { direction * slideDistance }) togetherWith
-                                    (fadeOut(tween(100)) + slideOutHorizontally(
-                                        tween(160, easing = LoginSwitchEasing),
-                                    ) { -direction * slideDistance / 2 }))
-                                    .using(SizeTransform { _, _ -> tween(LoginSwitchDuration, easing = LoginSwitchEasing) })
-                            },
-                            label = "login-connection-fields",
-                        ) { direct ->
-                            // Bind outgoing and incoming fields to their own mode during transitions.
-                            Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                                LoginField(
-                                    value = if (direct) form.directUrl else form.fnId,
-                                    onValueChange = { if (direct) onFormChange(form.copy(directUrl = it)) else onFormChange(form.copy(fnId = it.trim())) },
-                                    label = if (direct) "飞牛音乐地址" else "FN ID",
-                                    placeholder = if (direct) "https://nas.example.com/music/" else "输入你的 FN ID",
-                                    keyboardType = if (direct) KeyboardType.Uri else KeyboardType.Ascii,
-                                    onNext = { focus.moveFocus(FocusDirection.Down) },
-                                    enabled = direct == form.useDirectConnection,
-                                )
-                                if (direct) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Checkbox(form.allowPrivateLanHttp, { onFormChange(form.copy(allowPrivateLanHttp = it)) }, enabled = form.useDirectConnection)
-                                        Text("允许局域网 HTTP（仅限可信网络）", style = MaterialTheme.typography.bodySmall, color = FnTextSecondary)
-                                    }
-                                }
-                            }
-                        }
+                        LoginField(
+                            value = form.musicFreeUrl,
+                            onValueChange = { onFormChange(form.copy(musicFreeUrl = it)) },
+                            label = "Music Free 地址",
+                            placeholder = "http://192.168.1.10:14533",
+                            keyboardType = KeyboardType.Uri,
+                            onNext = { focus.moveFocus(FocusDirection.Down) },
+                        )
+                        PrivateLanHttpCheckbox(form, onFormChange)
                         LoginField(form.username, { onFormChange(form.copy(username = it)) }, "音乐账号", "输入音乐账号", onNext = { focus.moveFocus(FocusDirection.Down) })
                         LoginField(
                             form.password, { onFormChange(form.copy(password = it)) }, "密码", "输入密码",
@@ -231,9 +150,20 @@ fun ConnectionScreen(
                     }
                 }
                 Spacer(Modifier.height(32.dp))
-                Text("FN MUSIC  /  私人音乐，随时聆听", color = Color.White.copy(alpha = .5f), style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
+                Text("MUSIC FREE  /  私人音乐，随时聆听", color = Color.White.copy(alpha = .5f), style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp)
             }
         }
+    }
+}
+
+@Composable
+private fun PrivateLanHttpCheckbox(
+    form: LoginForm,
+    onFormChange: (LoginForm) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(form.allowPrivateLanHttp, { onFormChange(form.copy(allowPrivateLanHttp = it)) })
+        Text("允许局域网 HTTP（仅限可信网络）", style = MaterialTheme.typography.bodySmall, color = FnTextSecondary)
     }
 }
 
@@ -249,13 +179,11 @@ private fun LoginField(
     onDone: () -> Unit = {},
     visualTransformation: VisualTransformation = VisualTransformation.None,
     trailingIcon: @Composable (() -> Unit)? = null,
-    enabled: Boolean = true,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(label, color = FnTextSecondary, style = MaterialTheme.typography.labelLarge)
         OutlinedTextField(
             value = value,
-            enabled = enabled,
             onValueChange = onValueChange,
             modifier = Modifier.fillMaxWidth().semantics { contentDescription = label },
             placeholder = { Text(placeholder, style = MaterialTheme.typography.bodyMedium) },
