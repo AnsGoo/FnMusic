@@ -25,6 +25,7 @@ class _FakePlayer extends MfPlayer {
     required String streamUrl,
     String? coverId,
     Duration? duration,
+    bool transcoded = false,
   }) async {
     attempted.add(title);
     state.value = PlaybackState(

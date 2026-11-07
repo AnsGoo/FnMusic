@@ -872,6 +872,9 @@ class AppModel extends ChangeNotifier {
         duration: Duration(
           milliseconds: (track.durationSeconds * 1000).round(),
         ),
+        // The transcoder answers with a chunked body whose position the
+        // engine never advances; the player then times the bar itself.
+        transcoded: transcode,
       );
       if (started) _failedSkips = 0;
       notifyListeners();

@@ -88,6 +88,14 @@ class MfPlayer {
   /// the event stream instead of through [play]'s catch block.
   String? _currentUrl;
 
+  /// Wall-clock fallback for transcode streams. The mp3 transcoder answers
+  /// with a chunked, unseekable body whose position AVPlayer never advances,
+  /// which froze the progress bar while audio kept playing. While active the
+  /// engine's position stream is ignored and a timer advances [position].
+  bool _clockActive = false;
+  DateTime? _clockStamp;
+  Timer? _clock;
+
   /// One probe per track even when both failure channels fire.
   String? _probedTrackId;
   Future<String>? _probeResult;
@@ -98,6 +106,8 @@ class MfPlayer {
       player.positionStream.listen((position) {
         final current = state.value;
         if (!current.hasTrack) return;
+        // The transcode fallback owns the timeline while active.
+        if (_clockActive) return;
         // Ignore the tail beyond the reported duration; the player can drift a
         // few hundred milliseconds past the end while switching tracks.
         final clamped = current.duration > Duration.zero && position > current.duration
@@ -164,6 +174,35 @@ class MfPlayer {
     onFailed?.call(trackId, reason);
   }
 
+  /// Advances [position] with wall-clock time while the engine's own stream is
+  /// useless (transcoded chunked bodies). Keeps ticking at 4 Hz; a paused or
+  /// stopped player simply stops moving the stamp forward.
+  void _startClock() {
+    _clockActive = true;
+    _clockStamp = DateTime.now();
+    _clock ??= Timer.periodic(const Duration(milliseconds: 250), (_) {
+      final current = state.value;
+      if (!current.playing || !current.hasTrack) {
+        _clockStamp = DateTime.now();
+        return;
+      }
+      final now = DateTime.now();
+      final elapsed = now.difference(_clockStamp!);
+      _clockStamp = now;
+      var next = current.position + elapsed;
+      if (current.duration > Duration.zero && next > current.duration) {
+        next = current.duration;
+      }
+      state.value = current.copyWith(position: next);
+    });
+  }
+
+  void _stopClock() {
+    _clockActive = false;
+    _clock?.cancel();
+    _clock = null;
+  }
+
   /// Loads and starts [streamUrl]. Returns false when the server could not
   /// hand over playable audio; the reason is exposed through [state] and
   /// [onFailed].
@@ -174,12 +213,14 @@ class MfPlayer {
     required String streamUrl,
     String? coverId,
     Duration? duration,
+    bool transcoded = false,
   }) async {
     if (_subs.isEmpty) _bind();
     _reportedFailure = null;
     _probedTrackId = null;
     _probeResult = null;
     _currentUrl = streamUrl;
+    _stopClock();
     state.value = PlaybackState(
       trackId: trackId,
       title: title,
@@ -188,6 +229,7 @@ class MfPlayer {
       playing: false,
       duration: duration ?? Duration.zero,
     );
+    if (transcoded) _startClock();
     try {
       await _player.setUrl(streamUrl);
       await _player.setVolume(_volume);
@@ -230,7 +272,16 @@ class MfPlayer {
 
   Future<void> seek(Duration position) async {
     if (!state.value.hasTrack) return;
-    await _player.seek(position);
+    // Transcoded chunked streams have no ranges, so the engine can only reach
+    // data it already buffered; a farther seek throws. Drop it silently — the
+    // wall-clock fallback keeps the bar honest afterwards.
+    try {
+      await _player.seek(position);
+      if (_clockActive) {
+        state.value = state.value.copyWith(position: position);
+        _clockStamp = DateTime.now();
+      }
+    } catch (_) {}
   }
 
   void setVolume(double value) {
@@ -241,11 +292,13 @@ class MfPlayer {
   double get volume => _volume;
 
   Future<void> stop() async {
+    _stopClock();
     await _engine?.stop();
     state.value = const PlaybackState();
   }
 
   void dispose() {
+    _stopClock();
     for (final sub in _subs) {
       unawaited(sub.cancel());
     }
