@@ -7,7 +7,7 @@ library;
 
 import 'dart:async';
 
-import 'package:dart_cast/dart_cast.dart';
+import 'package:dart_cast/dart_cast.dart' hide ServerInfo;
 import 'package:flutter/foundation.dart';
 
 import '../audio/player.dart';
@@ -110,6 +110,9 @@ class AppModel extends ChangeNotifier {
   bool _connecting = false;
   String? _error;
 
+  ServerInfo? _serverInfo;
+  bool _probingServer = false;
+
   Section _section = Section.home;
   Detail? _detail;
 
@@ -187,6 +190,8 @@ class AppModel extends ChangeNotifier {
   MusicFreeSession? get session => _session;
   bool get connecting => _connecting;
   String? get error => _error;
+  ServerInfo? get serverInfo => _serverInfo;
+  bool get probingServer => _probingServer;
   Section get section => _section;
   Detail? get detail => _detail;
   bool get loading => _loading;
@@ -317,8 +322,6 @@ class AppModel extends ChangeNotifier {
 
   // ---- Session ------------------------------------------------------------
 
-
-
   Future<void> restoreSession() async {
     final saved = await _store.load();
     if (saved == null) {
@@ -388,7 +391,33 @@ class AppModel extends ChangeNotifier {
     _homeQuery = '';
     _homeSearching = false;
     _homeSearch = const SearchAll.empty();
+    _serverInfo = null;
     notifyListeners();
+  }
+
+  /// Settings-page probe: latency and server identity. Never surfaces as a
+  /// global error — the page renders offline state and offers a retry.
+  Future<void> refreshServerInfo() async {
+    if (_probingServer || _session == null) return;
+    _probingServer = true;
+    notifyListeners();
+    final info = await client.serverInfo();
+    if (_disposed) return;
+    _serverInfo = info;
+    _probingServer = false;
+    notifyListeners();
+  }
+
+  /// Re-point the app at another server (or the same one with fresh
+  /// credentials): drop everything, then sign in again. On failure the user
+  /// lands on the login page with the error shown there.
+  Future<void> switchServer(
+    String rawUrl,
+    String username,
+    String password,
+  ) async {
+    await logout();
+    await login(rawUrl, username, password);
   }
 
   void consumeError() {
@@ -960,8 +989,7 @@ class AppModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  double get volume =>
-      _castSession != null ? _castVolume : player.volume;
+  double get volume => _castSession != null ? _castVolume : player.volume;
 
   Future<void> seek(Duration position) {
     final session = _castSession;
@@ -998,7 +1026,10 @@ class AppModel extends ChangeNotifier {
     final detail = _detail;
     if (detail != null && detail.tracks.isNotEmpty) {
       _detail = detail.copyWith(
-        tracks: [for (final t in detail.tracks) t.id == id ? t.copyWith(isFavorite: fav) : t],
+        tracks: [
+          for (final t in detail.tracks)
+            t.id == id ? t.copyWith(isFavorite: fav) : t,
+        ],
       );
     }
     if (fav) {

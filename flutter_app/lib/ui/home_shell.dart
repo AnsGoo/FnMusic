@@ -6,10 +6,10 @@ import 'package:provider/provider.dart';
 
 import '../state/app_model.dart';
 import 'browse_view.dart';
-import 'controls.dart';
 import 'lyrics_view.dart';
 import 'now_playing.dart';
 import 'player_bar.dart';
+import 'settings_page.dart';
 import 'theme.dart';
 
 class HomeShell extends StatefulWidget {
@@ -208,44 +208,62 @@ class _Sidebar extends StatelessWidget {
               },
             ),
           const Spacer(),
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Mf.surfaceAlt,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                _AvatarLetter(username: model.session?.username ?? ''),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    model.session?.username ?? '',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Mf.textSoft, fontSize: 12),
+          // The whole account chip opens the settings page (server status,
+          // switch server, sign out); the old inline logout icon moved there.
+          Tooltip(
+            message: '账号与设置',
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _openSettings(context),
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Mf.surfaceAlt,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      AvatarLetter(username: model.session?.username ?? ''),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          model.session?.username ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Mf.textSoft,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        size: 17,
+                        color: Mf.faint,
+                      ),
+                    ],
                   ),
                 ),
-                MfIconButton(
-                  icon: Icons.logout_rounded,
-                  size: 26,
-                  glyph: 15,
-                  tooltip: '退出登录',
-                  onTap: model.logout,
-                ),
-              ],
+              ),
             ),
           ),
         ],
       ),
     );
   }
+
+  void _openSettings(BuildContext context) {
+    Navigator.of(context)
+        .push(MaterialPageRoute<void>(builder: (_) => const SettingsPage()));
+  }
 }
 
 /// Circular avatar showing the first character of the username, in the same
 /// clay gradient as the primary buttons.
-class _AvatarLetter extends StatelessWidget {
-  const _AvatarLetter({required this.username});
+class AvatarLetter extends StatelessWidget {
+  const AvatarLetter({super.key, required this.username});
 
   final String username;
 
@@ -312,9 +330,7 @@ class _NavItemState extends State<_NavItem> {
   @override
   Widget build(BuildContext context) {
     final selected = widget.selected;
-    final color = selected
-        ? Mf.accent
-        : (_hovered ? Mf.text : Mf.muted);
+    final color = selected ? Mf.accent : (_hovered ? Mf.text : Mf.muted);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
@@ -331,7 +347,9 @@ class _NavItemState extends State<_NavItem> {
           decoration: BoxDecoration(
             color: selected
                 ? Mf.accentWash
-                : (_hovered ? Mf.raised.withValues(alpha: 0.6) : Colors.transparent),
+                : (_hovered
+                      ? Mf.raised.withValues(alpha: 0.6)
+                      : Colors.transparent),
             borderRadius: BorderRadius.circular(7),
           ),
           child: Row(
@@ -357,4 +375,3 @@ class _NavItemState extends State<_NavItem> {
     );
   }
 }
-

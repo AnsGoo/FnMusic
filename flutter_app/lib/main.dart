@@ -93,6 +93,9 @@ class _SplashOverlayState extends State<_SplashOverlay>
   static const _exitDuration = Duration(milliseconds: 600);
 
   final DateTime _startedAt = DateTime.now();
+  // Saved at initState: looking the model up via `context.read` is unsafe
+  // once the element is being unmounted (dispose).
+  late final AppModel _model;
   late final AnimationController _spin;
   late final AnimationController _exit;
   bool _exiting = false;
@@ -100,17 +103,17 @@ class _SplashOverlayState extends State<_SplashOverlay>
   @override
   void initState() {
     super.initState();
+    _model = context.read<AppModel>();
     _spin = AnimationController(vsync: this, duration: _spinPeriod)..repeat();
     _exit = AnimationController(vsync: this, duration: _exitDuration);
-    final model = context.read<AppModel>();
-    model.addListener(_onModelChanged);
+    _model.addListener(_onModelChanged);
     // Booting may already be over by the time this overlay mounts.
-    _beginExitWhenReady(model.booting);
+    _beginExitWhenReady(_model.booting);
   }
 
   @override
   void dispose() {
-    context.read<AppModel>().removeListener(_onModelChanged);
+    _model.removeListener(_onModelChanged);
     _spin.dispose();
     _exit.dispose();
     super.dispose();
@@ -118,73 +121,79 @@ class _SplashOverlayState extends State<_SplashOverlay>
 
   void _onModelChanged() {
     if (!mounted) return;
-    _beginExitWhenReady(context.read<AppModel>().booting);
+    _beginExitWhenReady(_model.booting);
   }
 
   void _beginExitWhenReady(bool booting) {
     if (_exiting || booting) return;
     _exiting = true;
-    _spin.stop();
     final remaining = _minVisible - DateTime.now().difference(_startedAt);
     (remaining <= Duration.zero
             ? Future<void>.value()
             : Future<void>.delayed(remaining))
         .then((_) {
-      if (!mounted) return;
-      _exit.forward().whenComplete(widget.onFinished);
-    });
+          if (!mounted) return;
+          // Keep the vinyl spinning right up until the exit slide starts.
+          _spin.stop();
+          _exit.forward().whenComplete(widget.onFinished);
+        });
   }
 
   @override
   Widget build(BuildContext context) {
     final height = MediaQuery.sizeOf(context).height;
-    return AnimatedBuilder(
-      animation: Listenable.merge([_spin, _exit]),
-      builder: (context, _) {
-        // 0 → 1 as the mark leaves: slide from centre past the top edge
-        // while fading out.
-        final t = Curves.easeInCubic.transform(_exit.value);
-        final travel = height / 2 + 44;
-        return ColoredBox(
-          color: Mf.bg,
-          child: Center(
-            child: Transform.translate(
-              offset: Offset(0, -travel * t),
-              child: Opacity(
-                opacity: 1 - t,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    RotationTransition(
-                      turns: _spin,
-                      child: ClipOval(
-                        child: Image.asset(
-                          'assets/logo.png',
-                          width: 92,
-                          height: 92,
-                          filterQuality: FilterQuality.high,
+    // Material (transparent) gives the tagline a DefaultTextStyle ancestor —
+    // without it debug builds paint the "no Material" double underline.
+    return Material(
+      type: MaterialType.transparency,
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_spin, _exit]),
+        builder: (context, _) {
+          // 0 → 1 as the mark leaves: slide from centre past the top edge
+          // while fading out.
+          final t = Curves.easeInCubic.transform(_exit.value);
+          final travel = height / 2 + 44;
+          return ColoredBox(
+            color: Mf.bg,
+            child: Center(
+              child: Transform.translate(
+                offset: Offset(0, -travel * t),
+                child: Opacity(
+                  opacity: 1 - t,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      RotationTransition(
+                        turns: _spin,
+                        child: ClipOval(
+                          child: Image.asset(
+                            'assets/logo.png',
+                            width: 92,
+                            height: 92,
+                            filterQuality: FilterQuality.high,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 22),
-                    const Text(
-                      '让听歌这件事简单一点',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Mf.textSoft,
-                        fontSize: 13,
-                        letterSpacing: 3,
-                        height: 1.2,
-                        fontWeight: FontWeight.w500,
+                      const SizedBox(height: 22),
+                      const Text(
+                        '让听歌这件事简单一点',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Mf.textSoft,
+                          fontSize: 13,
+                          letterSpacing: 3,
+                          height: 1.2,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }

@@ -293,7 +293,9 @@ class _TrackThumbState extends State<_TrackThumb> {
   }
 
   void _onFailed() {
-    if (_songArtFailed || widget.fallbackUrl == null) return;
+    // The image load may outlive this row (fast scrolling recycles rows);
+    // ignore late failures from the discarded image stream.
+    if (!mounted || _songArtFailed || widget.fallbackUrl == null) return;
     setState(() => _songArtFailed = true);
   }
 

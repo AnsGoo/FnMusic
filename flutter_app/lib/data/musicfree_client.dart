@@ -30,7 +30,8 @@ class AuthException extends MusicFreeException {
 }
 
 class MusicFreeClient {
-  MusicFreeClient({http.Client? httpClient}) : _http = httpClient ?? _defaultClient();
+  MusicFreeClient({http.Client? httpClient})
+    : _http = httpClient ?? _defaultClient();
 
   final http.Client _http;
   MusicFreeSession? _session;
@@ -137,7 +138,9 @@ class MusicFreeClient {
   Future<List<Track>> albumTracks(String albumId) async {
     final root = await _get('rest/getAlbum.view', {'id': albumId});
     final album = _child(root, 'album');
-    final songs = album != null ? _objects(album['song']) : _objects(root['song']);
+    final songs = album != null
+        ? _objects(album['song'])
+        : _objects(root['song']);
     return songs.map(_toTrack).toList();
   }
 
@@ -148,7 +151,12 @@ class MusicFreeClient {
   Future<ArtistPage> artistDetail(String id) async {
     final root = await _get('rest/getArtist.view', {'id': id});
     final node = _child(root, 'artist');
-    if (node == null) return ArtistPage(artist: Artist(id: id, name: ''), albums: const []);
+    if (node == null) {
+      return ArtistPage(
+        artist: Artist(id: id, name: ''),
+        albums: const [],
+      );
+    }
     final artist = _toArtist(node);
     final albums = _objects(node['album']).map(_toAlbum).toList();
     return ArtistPage(
@@ -180,12 +188,32 @@ class MusicFreeClient {
     return _objects(starred?['song']).map(_toTrack).toList();
   }
 
+  /// Settings-page probe: round-trip latency plus whatever identity the
+  /// Subsonic ping reports (server type, its own version, the emulated
+  /// Subsonic API level). Failures become an offline [ServerInfo] instead of
+  /// an exception so the page can render a status row.
+  Future<ServerInfo> serverInfo() async {
+    final watch = Stopwatch()..start();
+    try {
+      final root = await _get('rest/ping.view');
+      watch.stop();
+      return ServerInfo(
+        online: true,
+        latencyMs: watch.elapsedMilliseconds,
+        serverType: _string(root, ['type']),
+        serverVersion: _string(root, ['serverVersion']),
+        subsonicVersion: _string(root, ['version']),
+        openSubsonic: root['openSubsonic'] == true,
+      );
+    } catch (_) {
+      return const ServerInfo(online: false);
+    }
+  }
+
   /// Stars or unstars a song (Subsonic star/unstar). The server answers a
   /// plain ok envelope; a non-ok status is surfaced through [_get].
   Future<void> setStarred(String songId, bool starred) async {
-    await _get(starred ? 'rest/star.view' : 'rest/unstar.view', {
-      'id': songId,
-    });
+    await _get(starred ? 'rest/star.view' : 'rest/unstar.view', {'id': songId});
   }
 
   Future<List<Track>> searchTracks(String query, {int limit = 60}) async {
@@ -197,7 +225,9 @@ class MusicFreeClient {
       'artistCount': '0',
     });
     final result = _child(root, 'searchResult3');
-    final songs = result != null ? _objects(result['song']) : _objects(root['song']);
+    final songs = result != null
+        ? _objects(result['song'])
+        : _objects(root['song']);
     return songs.map(_toTrack).toList();
   }
 
@@ -219,15 +249,20 @@ class MusicFreeClient {
     });
     final result = _child(root, 'searchResult3');
     return SearchAll(
-      tracks: (result != null ? _objects(result['song']) : _objects(root['song']))
-          .map(_toTrack)
-          .toList(),
-      albums: (result != null ? _objects(result['album']) : _objects(root['album']))
-          .map(_toAlbum)
-          .toList(),
-      artists: (result != null ? _objects(result['artist']) : _objects(root['artist']))
-          .map(_toArtist)
-          .toList(),
+      tracks:
+          (result != null ? _objects(result['song']) : _objects(root['song']))
+              .map(_toTrack)
+              .toList(),
+      albums:
+          (result != null ? _objects(result['album']) : _objects(root['album']))
+              .map(_toAlbum)
+              .toList(),
+      artists:
+          (result != null
+                  ? _objects(result['artist'])
+                  : _objects(root['artist']))
+              .map(_toArtist)
+              .toList(),
     );
   }
 
@@ -522,8 +557,7 @@ List<Map<String, dynamic>> _objects(Object? value) {
   return const [];
 }
 
-String _md5(String value) =>
-    md5.convert(utf8.encode(value)).toString();
+String _md5(String value) => md5.convert(utf8.encode(value)).toString();
 
 final _random = DateTime.now().microsecondsSinceEpoch;
 
@@ -553,7 +587,8 @@ Track _toTrack(Map<String, dynamic> node) {
     title: _string(node, ['title', 'name']) ?? '',
     artists: _embeddedArtists(node),
     album: _embeddedAlbum(node),
-    coverId: _string(node, ['coverArt', 'coverId']) ?? _string(node, ['albumId']),
+    coverId:
+        _string(node, ['coverArt', 'coverId']) ?? _string(node, ['albumId']),
     durationSeconds: duration ?? 0,
     isFavorite: node.containsKey('starred'),
     format: _string(node, ['suffix', 'format']),
@@ -565,7 +600,15 @@ Track _toTrack(Map<String, dynamic> node) {
 /// raw, which keeps lossless files lossless and gives the player a real
 /// duration plus range requests (so seeking works).
 const _transcodableFormats = {
-  'wma', 'ape', 'ogg', 'oga', 'opus', 'aifc', 'ac3', 'dts', 'webm',
+  'wma',
+  'ape',
+  'ogg',
+  'oga',
+  'opus',
+  'aifc',
+  'ac3',
+  'dts',
+  'webm',
 };
 
 bool needsTranscode(String? format) {
@@ -625,7 +668,9 @@ List<Artist> _embeddedArtists(Map<String, dynamic> node) {
   }
   final name = _string(node, ['artist', 'artistName']);
   if (name == null) return const [];
-  return [Artist(id: _string(node, ['artistId']) ?? '', name: name)];
+  return [
+    Artist(id: _string(node, ['artistId']) ?? '', name: name),
+  ];
 }
 
 Album? _embeddedAlbum(Map<String, dynamic> node) {

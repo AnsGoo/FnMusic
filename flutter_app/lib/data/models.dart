@@ -124,7 +124,10 @@ class SearchAll {
     this.artists = const [],
   });
 
-  const SearchAll.empty() : tracks = const [], albums = const [], artists = const [];
+  const SearchAll.empty()
+    : tracks = const [],
+      albums = const [],
+      artists = const [];
 
   final List<Track> tracks;
   final List<Album> albums;
@@ -178,6 +181,31 @@ class MusicFreeSession {
       clientSalt: (json['clientSalt'] as String?) ?? '',
     );
   }
+}
+
+/// The app's own version, shown on the settings page. Keep in sync with
+/// `version:` in pubspec.yaml (package_info_plus is deliberately not a
+/// dependency for this one string).
+const String kAppVersion = '1.0.0';
+
+/// Result of probing the server for the settings page: reachability plus
+/// whatever identity the Subsonic ping reports.
+class ServerInfo {
+  const ServerInfo({
+    required this.online,
+    this.latencyMs,
+    this.serverType,
+    this.serverVersion,
+    this.subsonicVersion,
+    this.openSubsonic = false,
+  });
+
+  final bool online;
+  final int? latencyMs;
+  final String? serverType;
+  final String? serverVersion;
+  final String? subsonicVersion;
+  final bool openSubsonic;
 }
 
 class LyricLine {

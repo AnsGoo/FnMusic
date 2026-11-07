@@ -59,13 +59,14 @@ AppModel _model() {
   return AppModel(client: client, player: _SilentPlayer());
 }
 
-Widget _host(AppModel model, Widget child) => ChangeNotifierProvider<AppModel>.value(
-  value: model,
-  child: MaterialApp(
-    theme: buildMfTheme(),
-    home: Scaffold(body: child),
-  ),
-);
+Widget _host(AppModel model, Widget child) =>
+    ChangeNotifierProvider<AppModel>.value(
+      value: model,
+      child: MaterialApp(
+        theme: buildMfTheme(),
+        home: Scaffold(body: child),
+      ),
+    );
 
 void main() {
   test('opening the player is a plain state toggle', () {
@@ -176,7 +177,14 @@ void main() {
 
     await tester.tap(find.byTooltip('打开侧边栏'));
     await tester.pumpAndSettle();
-    expect(find.byTooltip('退出登录'), findsOneWidget);
+    // The account chip (opens the settings page) is in the drawer.
+    expect(
+      find.descendant(
+        of: find.byType(Drawer),
+        matching: find.byTooltip('账号与设置'),
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(
       find.descendant(of: find.byType(Drawer), matching: find.text('专辑')),
@@ -184,7 +192,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(model.section, Section.albums);
-    expect(find.byTooltip('退出登录'), findsNothing);
+    expect(find.byTooltip('账号与设置'), findsNothing);
   });
 
   testWidgets('the shell keeps a single transport while the page is open', (
