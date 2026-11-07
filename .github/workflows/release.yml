@@ -1,0 +1,431 @@
+# MusicFly 多端打包流水线：Android APK/AAB、macOS DMG、iOS IPA/app、鸿蒙 HAP。
+#
+# 触发方式：
+#   * 发布 GitHub Release（published）—— 构建完成后自动把产物挂到该 Release。
+#   * 推送 v* 标签 —— 构建并挂到同名 Release（不存在则自动创建）。
+#   * Actions → "Release" → Run workflow —— 只构建并保留 workflow artifacts；
+#     如需挂到已有 Release，可填写 tag 输入框。
+#
+# 单个 job 可以临时关掉（仓库 → Settings → Variables）：
+#   HARMONY_CI=false —— 跳过鸿蒙构建
+#
+# 鸿蒙 job 跑在预构建容器 ghcr.io/honjow/harmonyos-build-env:26.0-api26 里
+# （已装 API 26 command-line-tools / hvigorw / ohpm / node / JDK 17 / SDK），
+# 鸿蒙版 flutter_flutter 在 job 内 clone（官方 Flutter 编不出 HAP）。
+# 产物是 unsigned 包：模拟器可直接装，真机需先配签名
+# （DevEco Studio → Project Structure → Signing Configs）。
+name: Release
+
+on:
+  release:
+    types: [published]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "可选：把本次构建挂到已有的 Release tag（留空则只保留 workflow artifacts）"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  # 从 pubspec.yaml 读取版本号，供各端产物命名使用。
+  version:
+    name: Read version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      tag: ${{ steps.read.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: read
+        name: Read version from pubspec
+        run: |
+          version=$(sed -n 's/^version:[[:space:]]*//p' flutter_app/pubspec.yaml | head -n1 | cut -d+ -f1)
+          if [ -z "$version" ]; then
+            echo "::error::Cannot read version from flutter_app/pubspec.yaml"
+            exit 1
+          fi
+          tag="${{ github.event.release.tag_name }}"
+          if [ -z "$tag" ]; then
+            tag="${{ inputs.tag }}"
+          fi
+          if [ -z "$tag" ] && [ "${{ github.event_name }}" = "push" ]; then
+            tag="${{ github.ref_name }}"
+          fi
+          if [ -z "$tag" ]; then
+            tag="v$version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Version: $version ($tag)"
+
+  android:
+    name: Android APK + AAB
+    needs: version
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.8"
+          channel: stable
+          cache: false
+
+      - name: Build release APK and AAB
+        working-directory: flutter_app
+        run: |
+          flutter pub get
+          flutter build apk --release
+          flutter build appbundle --release
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist/android
+          tag="${{ needs.version.outputs.tag }}"
+          cp flutter_app/build/app/outputs/flutter-apk/app-release.apk \
+            "dist/android/musicfly-android-$tag.apk"
+          cp flutter_app/build/app/outputs/bundle/release/app-release.aab \
+            "dist/android/musicfly-android-$tag.aab"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: dist/android/*
+
+  macos:
+    name: macOS DMG
+    needs: version
+    timeout-minutes: 60
+    # macos-15 是 arm64；Release 配置走 ARCHS_STANDARD，产物是 arm64+x86_64 通用包。
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.8"
+          channel: stable
+          cache: false
+
+      - name: Build DMG
+        working-directory: flutter_app
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          # 本地脚本默认找 ~/development/flutter，CI 上用 flutter-action 装的那份。
+          FLUTTER: flutter
+        run: |
+          command -v pod >/dev/null || brew install cocoapods
+          flutter pub get
+          ../scripts/package_macos.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: dist/*
+
+  ios:
+    name: iOS app / IPA
+    needs: version
+    # macos-15 ships Xcode 16.x; the UIScene/implicit-engine template needs a
+    # more recent toolchain than macos-14's default Xcode.
+    runs-on: macos-15
+    timeout-minutes: 70
+    env:
+      # 可选签名材料。不配置时构建 unsigned app 包；配置后导出签名 IPA。
+      IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+      IOS_EXPORT_METHOD: ${{ secrets.IOS_EXPORT_METHOD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.8"
+          channel: stable
+          cache: false
+
+      - name: Import signing material
+        if: env.IOS_CERTIFICATE_BASE64 != ''
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/app-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 16)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          echo "$IOS_CERTIFICATE_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security list-keychains -d user -s "$keychain" \
+            $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list \
+            -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+          uuid=$(security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" | plutil -extract UUID raw -)
+          cp "$RUNNER_TEMP/profile.mobileprovision" \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/$uuid.mobileprovision"
+
+      - name: Build signed IPA
+        if: env.IOS_CERTIFICATE_BASE64 != ''
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          method="${IOS_EXPORT_METHOD:-app-store}"
+          flutter pub get
+          # 生成的工程没有 team id；注入它，xcodebuild 才能匹配证书和描述文件。
+          sed -i '' \
+            "s/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = $IOS_TEAM_ID;/g" \
+            ios/Runner.xcodeproj/project.pbxproj
+          flutter build ipa --release --export-method "$method"
+
+      - name: Build unsigned app
+        if: env.IOS_CERTIFICATE_BASE64 == ''
+        working-directory: flutter_app
+        run: |
+          flutter pub get
+          flutter build ios --release --no-codesign
+
+      - name: Collect artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist/ios
+          tag="${{ needs.version.outputs.tag }}"
+          if [ -n "${IOS_CERTIFICATE_BASE64:-}" ]; then
+            cp flutter_app/build/ios/ipa/*.ipa "dist/ios/musicfly-ios-$tag.ipa"
+          else
+            cd flutter_app/build/ios/iphoneos
+            ditto -c -k --sequesterRsrc --keepParent Runner.app \
+              "$GITHUB_WORKSPACE/dist/ios/musicfly-ios-$tag-unsigned.zip"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-release
+          path: dist/ios/*
+
+  # 鸿蒙 HAP（未签名）。
+  #
+  # 跑在 GitHub 托管的 ubuntu-latest 的预构建容器里：
+  #   ghcr.io/honjow/harmonyos-build-env:26.0-api26
+  # 镜像里已经装好 API 26 的 command-line-tools（hvigorw / ohpm / node / JDK 17 / SDK），
+  # DEVECO_SDK_HOME、HOS_SDK_HOME、PATH 全部配好 —— 不用装 SDK，也不用自托管 runner。
+  # 镜像 tag 直接对应 API 版本，升 SDK 就改这一行。
+  #
+  # 镜像里没有 Flutter：鸿蒙版 flutter_flutter 得自己 clone（官方 Flutter 编不出 HAP），
+  # 它的引擎产物由 flutter 首次运行时从华为 OBS 拉取
+  # （flutter-ohos.obs.cn-south-1.myhuaweicloud.com，见 flutter_tools cache.dart）。
+  harmony:
+    name: HarmonyOS HAP (unsigned)
+    needs: version
+    timeout-minutes: 90
+    # 临时不想要鸿蒙产物，把仓库变量 HARMONY_CI 设为 false 即可跳过本 job。
+    if: vars.HARMONY_CI != 'false'
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/honjow/harmonyos-build-env:26.0-api26
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    # 容器 job 的默认 shell 在部分 runner 上会落到 sh（dash），而 dash 不认
+    # `set -o pipefail`，会直接以退出码 2 失败——表现为步骤里什么都没输出就红。
+    # 显式指定 bash，所有 run 步骤才真正跑在 bash 下。
+    defaults:
+      run:
+        shell: bash
+    env:
+      # 打成 tag 而不是分支：分支会漂，tag 可复现（与本地 ~/flutter_flutter 同版）。
+      FLUTTER_OH_REF: "3.47.7+ohos-0.0.1-pre"
+      FLUTTER_OH_REPO: "https://gitcode.com/openharmony-tpc/flutter_flutter.git"
+      FLUTTER_DIR: "/opt/flutter_flutter"
+      # 镜像里的工具链位置。显式声明而不是吃镜像 ENV：Prepare 步骤要用它写
+      # local.properties 的 hwsdk.dir，一旦为空就会在 set -u 下直接中断。
+      DEVECO_SDK_HOME: "/opt/harmonyos/command-line-tools/sdk"
+      HOS_SDK_HOME: "/opt/harmonyos/command-line-tools/sdk"
+    steps:
+      - uses: actions/checkout@v4
+
+      # 先确认容器里的东西齐不齐，缺了立刻报出来，别等到编译阶段才发现。
+      - name: Verify container toolchain
+        run: |
+          set -euo pipefail
+          echo "shell: $BASH_VERSION (0=${0##*/})"
+          echo "arch: $(uname -m)"
+
+          # 镜像把工具链装在固定目录。不假设镜像的 ENV 一定能被继承——
+          # 显式补进 PATH，并在 DEVECO_SDK_HOME 缺失时回落到默认位置。
+          TOOLCHAIN=/opt/harmonyos/command-line-tools
+          if [ -d "$TOOLCHAIN/bin" ]; then
+            export PATH="$TOOLCHAIN/bin:$TOOLCHAIN/tool/node/bin:$PATH"
+          fi
+          export DEVECO_SDK_HOME="${DEVECO_SDK_HOME:-$TOOLCHAIN/sdk}"
+
+          missing=""
+          for c in git curl unzip xz java ohpm hvigorw node; do
+            command -v "$c" >/dev/null 2>&1 || missing="$missing $c"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::容器里缺少:$missing —— 检查镜像 tag（当前 PATH=$PATH）"
+            exit 1
+          fi
+          # 用 sed 而不是 `| head -1`：java -version 输出 3 行，head 提前关管道会让
+          # java 吃 SIGPIPE 退出 141，pipefail 下整个 step 就挂了。sed 会读完输入。
+          java -version 2>&1 | sed -n '1p'
+          node -v
+          ohpm -v 2>/dev/null || true
+          echo "DEVECO_SDK_HOME=$DEVECO_SDK_HOME"
+          test -d "$DEVECO_SDK_HOME/default/openharmony" || {
+            echo "::error::SDK 不在 $DEVECO_SDK_HOME/default/openharmony"
+            exit 1
+          }
+          df -h / | tail -1
+
+      # ohpm 依赖（@ohos/hypium 等）要从 ohpm.openharmony.cn 拉。镜像默认
+      # retry_times=1、fetch_timeout=60s，海外 runner 上一次抖动就整轮失败，放宽重试。
+      - name: Harden ohpm for CI
+        run: |
+          set -euo pipefail
+          ohpm config set retry_times 3
+          ohpm config set fetch_timeout 180000
+          ohpm config list | grep -E "registry|retry_times|fetch_timeout"
+
+      # flutter_flutter 约 4GB（含 bin/cache 里的 Dart SDK 与引擎产物），
+      # 按 tag 缓存，命中后省掉 clone 和那次 1~2GB 的下载。
+      - name: Cache flutter_flutter
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.FLUTTER_DIR }}
+          key: flutter-oh-${{ env.FLUTTER_OH_REF }}
+
+      - name: Prepare flutter and local.properties
+        run: |
+          set -euo pipefail
+
+          # 镜像没设 JAVA_HOME，hvigorw 靠 PATH 里的 java 也能跑，但显式给出更稳。
+          if [ -z "${JAVA_HOME:-}" ]; then
+            echo "JAVA_HOME=$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")" >> "$GITHUB_ENV"
+          fi
+
+          if [ ! -x "$FLUTTER_DIR/bin/flutter" ]; then
+            rm -rf "$FLUTTER_DIR"
+            ok=0
+            for i in 1 2 3; do
+              if git clone --depth 1 -b "$FLUTTER_OH_REF" "$FLUTTER_OH_REPO" "$FLUTTER_DIR"; then
+                ok=1; break
+              fi
+              echo "clone 失败（第 $i 次），5 秒后重试"
+              rm -rf "$FLUTTER_DIR"; sleep 5
+            done
+            if [ "$ok" != "1" ]; then
+              echo "::error::flutter_flutter clone 失败：$FLUTTER_OH_REPO ($FLUTTER_OH_REF)"
+              exit 1
+            fi
+          else
+            echo "复用缓存里的 flutter_flutter：$FLUTTER_DIR"
+          fi
+          echo "$FLUTTER_DIR/bin" >> "$GITHUB_PATH"
+
+          # local.properties 被 .gitignore 排除，checkout 后不存在。
+          # hvigor 靠 hwsdk.dir 定位 SDK、flutter 靠 flutter.sdk 定位自己，缺一则直接失败。
+          version=$(sed -n 's/^version:[[:space:]]*//p' flutter_app/pubspec.yaml | head -n1 || true)
+          name=${version%%+*}
+          code=${version##*+}
+          if [ "$code" = "$version" ]; then code=1; fi
+          {
+            echo "hwsdk.dir=$DEVECO_SDK_HOME"
+            echo "flutter.sdk=$FLUTTER_DIR"
+            echo "flutter.versionName=$name"
+            echo "flutter.versionCode=$code"
+          } > flutter_app/ohos/local.properties
+          cat flutter_app/ohos/local.properties
+
+          # 首次调用只负责下载 Dart SDK（成功时就输出一行 "Downloading ..."），
+          # 拿不到版本号，所以要跑两遍：第一遍预热，第二遍取版本。
+          # 全程用重定向而不是管道 —— flutter --version 输出多行，`| head` 会让它
+          # 吃 SIGPIPE 退出 141，在 pipefail 下直接把 step 干掉。
+          "$FLUTTER_DIR/bin/flutter" --version > "$RUNNER_TEMP/fv.log" 2>&1 || true
+          if ! grep -qi ohos "$RUNNER_TEMP/fv.log"; then
+            "$FLUTTER_DIR/bin/flutter" --version > "$RUNNER_TEMP/fv.log" 2>&1 || true
+          fi
+          ver="$(head -n1 "$RUNNER_TEMP/fv.log" || true)"
+          printf '>>> %s\n' "$ver"
+          if ! grep -qi ohos "$RUNNER_TEMP/fv.log"; then
+            echo "::error::这个 flutter 不是鸿蒙分支，编不出 HAP：$ver"
+            tail -n 20 "$RUNNER_TEMP/fv.log" || true
+            exit 1
+          fi
+
+      # 构建逻辑全在脚本里（环境体检 → flutter-hvigor-plugin 软链 → build hap →
+      # 失败时从 hvigor 日志提取真报错）。不能用 --fast：那只跑 hvigor，
+      # Dart 代码不会重新 AOT 编译，产物会是旧逻辑。
+      - name: Build HAP
+        working-directory: flutter_app
+        run: MODE=release ./scripts/build-ohos.sh
+
+      - name: Collect artifact
+        run: |
+          set -euo pipefail
+          hap=$(find flutter_app/ohos/entry/build -name '*.hap' | head -1 || true)
+          if [ -z "$hap" ]; then
+            echo "::error::构建结束但没有产出 .hap"
+            ls -R flutter_app/ohos/entry/build 2>/dev/null | head -40 || true
+            exit 1
+          fi
+          case "$hap" in
+            *unsigned*) ;;
+            *) echo "::warning::产物带签名，与预期不符：$hap" ;;
+          esac
+          mkdir -p dist/harmony
+          out="dist/harmony/musicfly-harmony-${{ needs.version.outputs.tag }}-unsigned.hap"
+          cp "$hap" "$out"
+          ls -lh "$out"
+          sha256sum "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: harmony-release
+          path: dist/harmony/*
+          # 只是中转，最终由 publish job 挂到 Release，不用留太久。
+          retention-days: 7
+
+  # Release 事件 / 推 v* 标签 / 手动填 tag 时，把各端产物统一挂到该 Release。
+  publish:
+    name: Attach assets to release
+    # always()：只要 version 读到了，就别因为某一端失败而让其他平台的产物上不了
+    # Release。缺哪个端就少传哪个产物。
+    if: >-
+      always() && !cancelled() &&
+      needs.version.result == 'success' &&
+      (github.event_name == 'release' || inputs.tag != '' || startsWith(github.ref, 'refs/tags/'))
+    needs: [version, android, macos, ios, harmony]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+        run: |
+          ls -l dist
+          # 推 v* 标签触发时 Release 可能还不存在，先补建（已存在则跳过）。
+          gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1 \
+            || gh release create "$TAG" --generate-notes --repo "${{ github.repository }}"
+          gh release upload "$TAG" dist/* --repo "${{ github.repository }}" --clobber
