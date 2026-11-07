@@ -31,6 +31,14 @@ class _HomeShellState extends State<HomeShell> {
         final wide = constraints.maxWidth >= 900;
         return Scaffold(
           backgroundColor: Mf.bg,
+          // A phone has no room for a rail, so the same sidebar slides in from
+          // the left edge; the tab bar that used to sit under the transport is
+          // gone.
+          drawer: wide ? null : const _MobileDrawer(),
+          drawerScrimColor: const Color(0xD9060404),
+          // A phone swipe rarely starts within Flutter's default 20dp edge,
+          // so widen the grab strip without covering the whole screen.
+          drawerEdgeDragWidth: wide ? null : 56,
           body: wide ? _desktop(model) : _compact(model),
         );
       },
@@ -109,44 +117,84 @@ class _HomeShellState extends State<HomeShell> {
           ),
         ),
         PlayerBar(wide: false),
-        _BottomNav(model: model),
       ],
     );
   }
 }
 
+/// The desktop rail on a phone: opened by an edge swipe or the toolbar's menu
+/// button, with the same logo, section list and account footer.
+class _MobileDrawer extends StatelessWidget {
+  const _MobileDrawer();
+
+  @override
+  Widget build(BuildContext context) {
+    return Drawer(
+      width: 292,
+      backgroundColor: Mf.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.horizontal(right: Radius.circular(14)),
+      ),
+      child: SafeArea(
+        right: false,
+        child: _Sidebar(
+          model: context.watch<AppModel>(),
+          width: null,
+          roomy: true,
+          onNavigate: () => Scaffold.maybeOf(context)?.closeDrawer(),
+        ),
+      ),
+    );
+  }
+}
+
 class _Sidebar extends StatelessWidget {
-  const _Sidebar({required this.model});
+  const _Sidebar({
+    required this.model,
+    this.width = 208,
+    this.roomy = false,
+    this.onNavigate,
+  });
 
   final AppModel model;
+  final double? width;
+  final bool roomy;
+
+  /// The drawer closes itself after a section is picked.
+  final VoidCallback? onNavigate;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 208,
+      width: width,
       color: Mf.surface,
-      padding: const EdgeInsets.fromLTRB(14, 18, 14, 14),
+      padding: EdgeInsets.fromLTRB(
+        roomy ? 18 : 14,
+        roomy ? 24 : 18,
+        roomy ? 18 : 14,
+        roomy ? 20 : 14,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.only(left: 6, bottom: 20),
+            padding: EdgeInsets.only(left: 6, bottom: roomy ? 24 : 20),
             child: Row(
               children: [
                 ClipOval(
                   child: Image.asset(
                     'assets/logo.png',
-                    width: 30,
-                    height: 30,
+                    width: roomy ? 34 : 30,
+                    height: roomy ? 34 : 30,
                     filterQuality: FilterQuality.high,
                   ),
                 ),
                 const SizedBox(width: 9),
-                const Text(
+                Text(
                   '乐记',
                   style: TextStyle(
                     color: Mf.text,
-                    fontSize: 14,
+                    fontSize: roomy ? 16 : 14,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.6,
                   ),
@@ -158,7 +206,14 @@ class _Sidebar extends StatelessWidget {
             _NavItem(
               section: section,
               selected: model.section == section && model.detail == null,
-              onTap: () => model.select(section),
+              roomy: roomy,
+              onTap: () {
+                // A section picked from the drawer returns to the library,
+                // even if the full-screen player was open.
+                model.closeNowPlaying();
+                model.select(section);
+                onNavigate?.call();
+              },
             ),
           const Spacer(),
           Container(
@@ -210,17 +265,19 @@ class _NavItem extends StatefulWidget {
     required this.section,
     required this.selected,
     required this.onTap,
+    this.roomy = false,
   });
 
   final Section section;
   final bool selected;
   final VoidCallback onTap;
+  final bool roomy;
 
   @override
   State<_NavItem> createState() => _NavItemState();
 }
 
-/// The rail and the compact tab bar show the same glyph per section.
+/// The rail and the phone drawer share the same glyph per section.
 IconData _sectionIcon(Section section) => switch (section) {
   Section.tracks => Icons.library_music_outlined,
   Section.albums => Icons.album_outlined,
@@ -246,8 +303,11 @@ class _NavItemState extends State<_NavItem> {
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: Container(
-          margin: const EdgeInsets.only(bottom: 3),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          margin: EdgeInsets.only(bottom: widget.roomy ? 6 : 3),
+          padding: EdgeInsets.symmetric(
+            horizontal: 10,
+            vertical: widget.roomy ? 14 : 9,
+          ),
           decoration: BoxDecoration(
             color: selected
                 ? Mf.accentWash
@@ -256,13 +316,17 @@ class _NavItemState extends State<_NavItem> {
           ),
           child: Row(
             children: [
-              Icon(_sectionIcon(widget.section), size: 17, color: color),
-              const SizedBox(width: 10),
+              Icon(
+                _sectionIcon(widget.section),
+                size: widget.roomy ? 20 : 17,
+                color: color,
+              ),
+              SizedBox(width: widget.roomy ? 14 : 10),
               Text(
                 widget.section.label,
                 style: TextStyle(
                   color: color,
-                  fontSize: 13,
+                  fontSize: widget.roomy ? 15 : 13,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                 ),
               ),
@@ -274,70 +338,3 @@ class _NavItemState extends State<_NavItem> {
   }
 }
 
-class _BottomNav extends StatelessWidget {
-  const _BottomNav({required this.model});
-
-  final AppModel model;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Mf.surface,
-        border: Border(top: BorderSide(color: Mf.border)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          for (final section in Section.values)
-            _BottomNavItem(
-              section: section,
-              selected: model.section == section && model.detail == null,
-              onTap: () => model.select(section),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _BottomNavItem extends StatelessWidget {
-  const _BottomNavItem({
-    required this.section,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final Section section;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = selected ? Mf.accent : Mf.muted;
-    return Expanded(
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(_sectionIcon(section), size: 19, color: color),
-              const SizedBox(height: 3),
-              Text(
-                section.label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 10.5,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}

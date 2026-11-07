@@ -69,11 +69,31 @@ class _Toolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final model = context.watch<AppModel>();
     final hasDetail = model.detail != null;
+    // True on phone/narrow windows, where the shell puts navigation in a
+    // drawer instead of a permanent rail.
+    final hasDrawer = Scaffold.maybeOf(context)?.hasDrawer ?? false;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 20, 12),
+      padding: EdgeInsets.fromLTRB(
+        hasDrawer ? 8 : (wide ? 24 : 16),
+        wide ? 16 : 8,
+        wide ? 20 : 12,
+        wide ? 12 : 8,
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          // Phones keep their navigation in the drawer; this button is the
+          // visible alternative to swiping in from the left edge.
+          if (hasDrawer) ...[
+            MfIconButton(
+              icon: Icons.menu_rounded,
+              size: 38,
+              glyph: 21,
+              tooltip: '打开侧边栏',
+              onTap: () => Scaffold.maybeOf(context)?.openDrawer(),
+            ),
+            const SizedBox(width: 4),
+          ],
           if (hasDetail)
             const SizedBox.shrink()
           else

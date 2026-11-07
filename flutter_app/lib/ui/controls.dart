@@ -316,7 +316,7 @@ class _FnPrimaryButtonState extends State<MfPrimaryButton> {
                 widget.label,
                 style: TextStyle(
                   color: active ? Mf.cream : Mf.faint,
-                  fontSize: 13,
+                  fontSize: 13.5,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.1,
                 ),

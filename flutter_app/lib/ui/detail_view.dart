@@ -53,10 +53,22 @@ class _DetailViewState extends State<DetailView> {
                 onTap: model.back,
               ),
               const SizedBox(width: 14),
-              CoverImage(
-                url: model.coverUrl(detail.coverId),
-                size: widget.wide ? 150 : 104,
-                radius: 10,
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x59000000),
+                      blurRadius: 26,
+                      offset: Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: CoverImage(
+                  url: model.coverUrl(detail.coverId),
+                  size: widget.wide ? 150 : 104,
+                  radius: 12,
+                ),
               ),
               SizedBox(width: widget.wide ? 20 : 14),
               Expanded(
@@ -84,7 +96,7 @@ class _DetailViewState extends State<DetailView> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: Mf.muted, fontSize: 12.5),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 16),
                     Row(
                       children: [
                         MfPrimaryButton(

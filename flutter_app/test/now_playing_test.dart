@@ -110,6 +110,66 @@ void main() {
     expect(find.text('这首歌没有内嵌歌词'), findsOneWidget);
   });
 
+  testWidgets('on a phone the sections live in a swipe-in drawer', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final model = _model();
+    await tester.pumpWidget(_host(model, const HomeShell()));
+    await tester.pump();
+
+    // No tab bar under the transport any more.
+    expect(find.text('专辑'), findsNothing);
+    expect(find.byTooltip('打开侧边栏'), findsOneWidget);
+
+    // A left-to-right touch from the edge reveals the PC-style sidebar.
+    await tester.dragFrom(const Offset(4, 420), const Offset(260, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.text('专辑'), findsOneWidget);
+    expect(find.text('艺术家'), findsOneWidget);
+    expect(find.text('乐记'), findsOneWidget);
+  });
+
+  testWidgets('the toolbar menu button opens the same drawer', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final model = _model();
+    await tester.pumpWidget(_host(model, const HomeShell()));
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('打开侧边栏'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('歌单'), findsOneWidget);
+    expect(find.text('收藏'), findsOneWidget);
+  });
+
+  testWidgets('picking a section closes the drawer', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final model = _model();
+    await tester.pumpWidget(_host(model, const HomeShell()));
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('打开侧边栏'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('退出登录'), findsOneWidget);
+
+    await tester.tap(find.text('专辑'));
+    await tester.pumpAndSettle();
+
+    expect(model.section, Section.albums);
+    expect(find.byTooltip('退出登录'), findsNothing);
+  });
+
   testWidgets('the shell keeps a single transport while the page is open', (
     tester,
   ) async {
