@@ -164,15 +164,43 @@ class MusicFreeClient {
     return songs.map(_toTrack).toList();
   }
 
-  /// The server keeps lyrics on the song row but does not list them.
-  Future<Lyrics?> lyrics(String trackId) async {
+  /// OpenSubsonic structured lyrics, the endpoint the web player uses.
+  /// The server answers from its lyrics store first, then the file tags, and
+  /// reports per-line timestamps for synced content.
+  Future<Lyrics?> structuredLyrics(String trackId) async {
     try {
-      final root = await _get('rest/getSong.view', {'id': trackId});
-      final song = _child(root, 'song');
-      final content =
-          (_text(song?['lyrics'])) ?? _text(root['lyrics']);
-      if (content == null || content.trim().isEmpty) return null;
-      return parseLyrics(content);
+      final root = await _get('rest/getLyricsBySongId.view', {'id': trackId});
+      final list = _list(root['lyricsList'], 'structuredLyrics');
+      if (list.isEmpty) return null;
+      final first = list.first;
+      if (first.isEmpty) return null;
+      final nodes = first['line'];
+      if (nodes is! List || nodes.isEmpty) return null;
+      final synced = first['synced'] == true;
+      if (!synced) {
+        // Untimed content: keep the line order as plain text.
+        final plain = nodes
+            .whereType<Map<String, dynamic>>()
+            .map((node) => _text(node['value']) ?? '')
+            .where((line) => line.trim().isNotEmpty)
+            .join('\n');
+        return plain.isEmpty ? null : parseLyrics(plain);
+      }
+      // Synced content is rebuilt as LRC so the parser and the lyric view
+      // keep one code path. `start` may be missing on some lines; the last
+      // known timestamp then carries over.
+      final raw = StringBuffer();
+      var lastMs = 0;
+      for (final node in nodes) {
+        if (node is! Map<String, dynamic>) continue;
+        final text = _stripInlineLrcTags(_text(node['value']) ?? '');
+        if (text.trim().isEmpty) continue;
+        final ms = (node['start'] as num?)?.toInt() ?? lastMs;
+        lastMs = ms;
+        raw.writeln('${_lrcTimestamp(ms)}$text');
+      }
+      final content = raw.toString();
+      return content.isEmpty ? null : parseLyrics(content);
     } on MusicFreeException {
       return null;
     }
@@ -180,7 +208,10 @@ class MusicFreeClient {
 
   // ---- Media URLs ---------------------------------------------------------
 
-  String streamUrl(String trackId, {String? format = 'mp3', int? maxBitRate = 192}) {
+  /// Raw stream URL. [format]/[maxBitRate] must stay null for direct
+  /// playback: this server starts transcoding on maxBitRate alone, which
+  /// turns the body chunked and unseekable.
+  String streamUrl(String trackId, {String? format, int? maxBitRate}) {
     final params = <String, String>{'id': trackId};
     if (format != null) params['format'] = format;
     if (maxBitRate != null) params['maxBitRate'] = '$maxBitRate';
@@ -306,6 +337,24 @@ class MusicFreeClient {
 
 // ---- JSON helpers ---------------------------------------------------------
 
+/// Removes the inline per-word `[mm:ss.xx]` hints the music services embed
+/// inside a lyric line; only the plain sentence should survive.
+final _inlineLrcTag = RegExp(r'\[\s*\d{1,3}:\d{2}(?:\.\d{1,3})?\s*\]');
+
+String _stripInlineLrcTags(String value) =>
+    value.replaceAll(_inlineLrcTag, '').trim();
+
+/// Milliseconds → `[mm:ss.xx]`, minutes unbounded.
+String _lrcTimestamp(int milliseconds) {
+  final totalSeconds = milliseconds < 0 ? 0 : milliseconds ~/ 1000;
+  final minutes = totalSeconds ~/ 60;
+  final seconds = totalSeconds % 60;
+  final centis = (milliseconds < 0 ? 0 : milliseconds % 1000) ~/ 10;
+  return '[${minutes.toString().padLeft(2, '0')}:'
+      '${seconds.toString().padLeft(2, '0')}.'
+      '${centis.toString().padLeft(2, '0')}]';
+}
+
 String? _text(Object? value) {
   if (value is String) return value;
   if (value is num || value is bool) return '$value';
@@ -352,6 +401,14 @@ Map<String, dynamic>? _child(Map<String, dynamic>? node, String key) {
   return value is Map<String, dynamic> ? value : null;
 }
 
+List<Map<String, dynamic>> _list(Object? node, String key) {
+  final value = node is Map<String, dynamic> ? node[key] : null;
+  if (value is List) {
+    return value.whereType<Map<String, dynamic>>().toList();
+  }
+  return const [];
+}
+
 List<Map<String, dynamic>> _objects(Object? value) {
   if (value is List) {
     return value.whereType<Map<String, dynamic>>().toList();
@@ -393,7 +450,21 @@ Track _toTrack(Map<String, dynamic> node) {
     coverId: _string(node, ['coverArt', 'coverId']) ?? _string(node, ['albumId']),
     durationSeconds: duration ?? 0,
     isFavorite: node.containsKey('starred'),
+    format: _string(node, ['suffix', 'format']),
   );
+}
+
+/// Containers neither CoreAudio nor ExoPlayer reliably decode. These are the
+/// only tracks served through the mp3 transcoder; everything else streams
+/// raw, which keeps lossless files lossless and gives the player a real
+/// duration plus range requests (so seeking works).
+const _transcodableFormats = {
+  'wma', 'ape', 'ogg', 'oga', 'opus', 'aifc', 'ac3', 'dts', 'webm',
+};
+
+bool needsTranscode(String? format) {
+  if (format == null || format.isEmpty) return false;
+  return _transcodableFormats.contains(format.toLowerCase());
 }
 
 Album _toAlbum(Map<String, dynamic> node) => Album(

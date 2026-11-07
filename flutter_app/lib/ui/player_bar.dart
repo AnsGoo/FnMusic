@@ -101,12 +101,15 @@ class _PlayerBarState extends State<PlayerBar>
   ) {
     return Row(
       children: [
-        Expanded(
-          flex: 3,
+        // Like the web transport (flex: 1.2 middle): the song info and the
+        // volume control only take the width they need, so the progress
+        // column absorbs every remaining pixel.
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 250),
           child: _nowPlaying(model, audio, 46),
         ),
+        const SizedBox(width: 14),
         Expanded(
-          flex: 5,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -129,14 +132,6 @@ class _PlayerBarState extends State<PlayerBar>
                     glyph: 20,
                     tooltip: '下一首',
                     onTap: model.next,
-                  ),
-                  const SizedBox(width: 6),
-                  MfIconButton(
-                    icon: Icons.lyrics_outlined,
-                    size: 30,
-                    glyph: 17,
-                    tooltip: '歌词',
-                    onTap: model.showLyrics,
                   ),
                 ],
               ),
@@ -181,24 +176,21 @@ class _PlayerBarState extends State<PlayerBar>
             ],
           ),
         ),
-        Expanded(
-          flex: 3,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              const Icon(Icons.volume_up_rounded, size: 16, color: Mf.faint),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 96,
-                child: MfScrubber(
-                  fraction: model.volume,
-                  thumbColor: Mf.textSoft,
-                  activeColor: Mf.muted,
-                  onScrub: model.setVolume,
-                ),
+        const SizedBox(width: 14),
+        Row(
+          children: [
+            const Icon(Icons.volume_up_rounded, size: 16, color: Mf.faint),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 96,
+              child: MfScrubber(
+                fraction: model.volume,
+                thumbColor: Mf.textSoft,
+                activeColor: Mf.muted,
+                onScrub: model.setVolume,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ],
     );
@@ -228,12 +220,6 @@ class _PlayerBarState extends State<PlayerBar>
               size: 30,
               glyph: 20,
               onTap: model.next,
-            ),
-            MfIconButton(
-              icon: Icons.lyrics_outlined,
-              size: 30,
-              glyph: 17,
-              onTap: model.showLyrics,
             ),
           ],
         ),
@@ -305,7 +291,10 @@ class _PlayerBarState extends State<PlayerBar>
           ),
         ),
         const SizedBox(width: 11),
-        Expanded(
+        // Loose fit: inside the wide bar the info section hugs its content
+        // (capped by the caller), inside the compact bar it still gets the
+        // whole row from the parent Expanded.
+        Flexible(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,

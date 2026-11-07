@@ -104,6 +104,7 @@ class AppModel extends ChangeNotifier {
 
   Lyrics? _lyrics;
   bool _lyricsLoading = false;
+  int _lyricsRun = 0;
   bool _lyricsVisible = false;
   bool _nowPlaying = false;
 
@@ -477,7 +478,17 @@ class AppModel extends ChangeNotifier {
     _completedGuard = false;
     _lyrics = null;
     try {
-      final url = client.streamUrl(track.id);
+      // The transcoder answers with a chunked, unseekable body whose
+      // duration AVPlayer cannot read — that froze the progress bar. Only
+      // formats the decoders cannot handle go through it. maxBitRate alone
+      // also activates the transcoder on this server, so it must be dropped
+      // together with format for raw streams.
+      final transcode = needsTranscode(track.format);
+      final url = client.streamUrl(
+        track.id,
+        format: transcode ? 'mp3' : null,
+        maxBitRate: transcode ? 192 : null,
+      );
       final started = await player.play(
         trackId: track.id,
         title: track.title,
@@ -540,12 +551,6 @@ class AppModel extends ChangeNotifier {
 
   // ---- Lyrics -------------------------------------------------------------
 
-  Future<void> showLyrics() async {
-    _lyricsVisible = true;
-    notifyListeners();
-    if (_lyrics == null) await loadLyrics();
-  }
-
   void hideLyrics() {
     _lyricsVisible = false;
     notifyListeners();
@@ -569,15 +574,25 @@ class AppModel extends ChangeNotifier {
   }
 
   Future<void> loadLyrics() async {
+    // Generation, not a loading flag: skipping two tracks quickly must not
+    // swallow the fetch for the newest one; only the latest run may land.
+    final run = ++_lyricsRun;
     final track = currentTrack;
-    if (track == null || _lyricsLoading) return;
+    if (track == null) return;
     _lyricsLoading = true;
     notifyListeners();
     try {
-      _lyrics = await client.lyrics(track.id);
+      // Same endpoint the web player uses: the server reads its lyrics store
+      // first, then the file tags, and reports per-line timestamps when synced.
+      final lyrics = await client.structuredLyrics(track.id);
+      // The user may have moved to another song while fetching.
+      if (run != _lyricsRun || currentTrack?.id != track.id) return;
+      _lyrics = lyrics;
     } finally {
-      _lyricsLoading = false;
-      notifyListeners();
+      if (run == _lyricsRun) {
+        _lyricsLoading = false;
+        notifyListeners();
+      }
     }
   }
 

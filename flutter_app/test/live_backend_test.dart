@@ -98,13 +98,13 @@ void main() {
     }
   });
 
-  test('reads embedded lyrics when a song carries them', () async {
+  test('reads structured lyrics when a song carries them', () async {
     if (_server == null) return;
     final client = await signIn();
     final page = await client.tracks(1, 20);
 
     for (final track in page.items) {
-      final lyrics = await client.lyrics(track.id);
+      final lyrics = await client.structuredLyrics(track.id);
       if (lyrics == null) continue;
       expect(
         lyrics.isTimed || (lyrics.plain?.isNotEmpty ?? false),

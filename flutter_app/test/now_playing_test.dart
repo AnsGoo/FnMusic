@@ -42,7 +42,7 @@ class _SilentPlayer extends MfPlayer {
 /// every track so the transport can show a line.
 class _OfflineClient extends MusicFreeClient {
   @override
-  Future<Lyrics?> lyrics(String trackId) async => null;
+  Future<Lyrics?> structuredLyrics(String trackId) async => null;
 }
 
 AppModel _model() {

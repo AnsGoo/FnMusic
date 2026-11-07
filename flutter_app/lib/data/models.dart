@@ -13,6 +13,7 @@ class Track {
     this.coverId,
     this.durationSeconds = 0,
     this.isFavorite = false,
+    this.format,
   });
 
   final String id;
@@ -22,6 +23,10 @@ class Track {
   final String? coverId;
   final double durationSeconds;
   final bool isFavorite;
+
+  /// File container/suffix from the server ("mp3", "flac", "wma", …), used to
+  /// decide whether the player can take the raw file or needs a transcode.
+  final String? format;
 
   String get artistLine =>
       artists.isEmpty ? '未知艺术家' : artists.map((a) => a.name).join(' / ');

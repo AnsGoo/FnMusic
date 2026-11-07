@@ -108,7 +108,9 @@ class MfPlayer {
     );
     _subs.add(
       player.durationStream.listen((duration) {
-        if (duration == null) return;
+        // A chunked/live body (or a decode the engine cannot size) reports
+        // zero; that must not wipe the duration the server metadata provided.
+        if (duration == null || duration <= Duration.zero) return;
         state.value = state.value.copyWith(duration: duration);
       }),
     );

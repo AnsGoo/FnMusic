@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:musicfly/data/models.dart';
+import 'package:musicfly/data/musicfree_client.dart';
 
 void main() {
   group('parseLyrics', () {
@@ -34,6 +35,56 @@ void main() {
       expect(lyrics.indexAt(const Duration(seconds: 2)), 0);
       expect(lyrics.indexAt(const Duration(seconds: 6)), 1);
       expect(lyrics.indexAt(const Duration(seconds: 20)), 2);
+    });
+  });
+
+  group('transcode decision', () {
+    test('containers the decoders cannot handle go through mp3', () {
+      expect(needsTranscode('wma'), isTrue);
+      expect(needsTranscode('APE'), isTrue);
+      expect(needsTranscode('ogg'), isTrue);
+      expect(needsTranscode('opus'), isTrue);
+    });
+
+    test('common and lossless containers stream raw', () {
+      expect(needsTranscode('mp3'), isFalse);
+      expect(needsTranscode('m4a'), isFalse);
+      expect(needsTranscode('flac'), isFalse);
+      expect(needsTranscode('wav'), isFalse);
+      expect(needsTranscode(null), isFalse);
+      expect(needsTranscode(''), isFalse);
+    });
+
+    test('tracks carry the container suffix', () {
+      const track = Track(id: 'a', title: 't', format: 'flac');
+      expect(track.format, 'flac');
+      const bare = Track(id: 'b', title: 't');
+      expect(bare.format, isNull);
+    });
+
+    test('raw stream URLs carry neither format nor maxBitRate', () {
+      final client = MusicFreeClient()
+        ..restore(
+          MusicFreeSession(
+            baseUrl: Uri.parse('http://127.0.0.1:14533'),
+            token: 't',
+            username: 'admin',
+            subsonicToken: 'abc',
+            clientSalt: 'salt',
+          ),
+        );
+      final raw = Uri.parse(
+        client.streamUrl('id1', format: null, maxBitRate: null),
+      );
+      expect(raw.queryParameters.containsKey('format'), isFalse);
+      // maxBitRate alone flips this server into the chunked transcoder.
+      expect(raw.queryParameters.containsKey('maxBitRate'), isFalse);
+
+      final transcoded = Uri.parse(
+        client.streamUrl('id1', format: 'mp3', maxBitRate: 192),
+      ).queryParameters;
+      expect(transcoded['format'], 'mp3');
+      expect(transcoded['maxBitRate'], '192');
     });
   });
 
