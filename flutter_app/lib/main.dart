@@ -8,7 +8,6 @@ import 'state/app_model.dart';
 import 'ui/home_shell.dart';
 import 'ui/login_page.dart';
 import 'ui/theme.dart';
-import 'ui/widgets.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,43 +32,159 @@ class MusicFlyApp extends StatelessWidget {
   }
 }
 
-class _RootPage extends StatelessWidget {
+class _RootPage extends StatefulWidget {
   const _RootPage();
+
+  @override
+  State<_RootPage> createState() => _RootPageState();
+}
+
+class _RootPageState extends State<_RootPage> {
+  /// The launch overlay stays mounted while its exit animation plays; the
+  /// destination page (login / home) is already alive underneath, so data
+  /// loading overlaps the reveal instead of waiting for it.
+  bool _splashUp = true;
 
   @override
   Widget build(BuildContext context) {
     final model = context.watch<AppModel>();
-    if (model.booting) return const _Splash();
-    if (!model.signedIn) return const LoginPage();
-    return const HomeShell();
+    final Widget page;
+    if (model.booting) {
+      page = const ColoredBox(color: Mf.bg);
+    } else if (!model.signedIn) {
+      page = const LoginPage();
+    } else {
+      page = const HomeShell();
+    }
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        page,
+        if (_splashUp)
+          _SplashOverlay(
+            onFinished: () {
+              if (mounted) setState(() => _splashUp = false);
+            },
+          ),
+      ],
+    );
   }
 }
 
-/// Shown for the frame it takes to read the saved session.
-class _Splash extends StatelessWidget {
-  const _Splash();
+/// Launch splash: the vinyl logo spins over a background that matches its own
+/// dark palette (no visible plate), with the tagline underneath. Once booting
+/// finishes the whole mark glides from the centre up past the top edge and
+/// fades, revealing the page beneath.
+class _SplashOverlay extends StatefulWidget {
+  const _SplashOverlay({required this.onFinished});
+
+  final VoidCallback onFinished;
+
+  @override
+  State<_SplashOverlay> createState() => _SplashOverlayState();
+}
+
+class _SplashOverlayState extends State<_SplashOverlay>
+    with SingleTickerProviderStateMixin {
+  /// Keep the mark on screen long enough to register the tagline even when
+  /// the session restores instantly.
+  static const _minVisible = Duration(milliseconds: 1200);
+  static const _spinPeriod = Duration(milliseconds: 1800);
+  static const _exitDuration = Duration(milliseconds: 600);
+
+  final DateTime _startedAt = DateTime.now();
+  late final AnimationController _spin;
+  late final AnimationController _exit;
+  bool _exiting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _spin = AnimationController(vsync: this, duration: _spinPeriod)..repeat();
+    _exit = AnimationController(vsync: this, duration: _exitDuration);
+    final model = context.read<AppModel>();
+    model.addListener(_onModelChanged);
+    // Booting may already be over by the time this overlay mounts.
+    _beginExitWhenReady(model.booting);
+  }
+
+  @override
+  void dispose() {
+    context.read<AppModel>().removeListener(_onModelChanged);
+    _spin.dispose();
+    _exit.dispose();
+    super.dispose();
+  }
+
+  void _onModelChanged() {
+    if (!mounted) return;
+    _beginExitWhenReady(context.read<AppModel>().booting);
+  }
+
+  void _beginExitWhenReady(bool booting) {
+    if (_exiting || booting) return;
+    _exiting = true;
+    _spin.stop();
+    final remaining = _minVisible - DateTime.now().difference(_startedAt);
+    (remaining <= Duration.zero
+            ? Future<void>.value()
+            : Future<void>.delayed(remaining))
+        .then((_) {
+      if (!mounted) return;
+      _exit.forward().whenComplete(widget.onFinished);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Mf.bg,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ClipOval(
-              child: Image.asset(
-                'assets/logo.png',
-                width: 72,
-                height: 72,
-                filterQuality: FilterQuality.high,
+    final height = MediaQuery.sizeOf(context).height;
+    return AnimatedBuilder(
+      animation: Listenable.merge([_spin, _exit]),
+      builder: (context, _) {
+        // 0 → 1 as the mark leaves: slide from centre past the top edge
+        // while fading out.
+        final t = Curves.easeInCubic.transform(_exit.value);
+        final travel = height / 2 + 44;
+        return ColoredBox(
+          color: Mf.bg,
+          child: Center(
+            child: Transform.translate(
+              offset: Offset(0, -travel * t),
+              child: Opacity(
+                opacity: 1 - t,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    RotationTransition(
+                      turns: _spin,
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/logo.png',
+                          width: 92,
+                          height: 92,
+                          filterQuality: FilterQuality.high,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    const Text(
+                      '让听歌这件事简单一点',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Mf.textSoft,
+                        fontSize: 13,
+                        letterSpacing: 3,
+                        height: 1.2,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(height: 18),
-            const MfSpinner(size: 16),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

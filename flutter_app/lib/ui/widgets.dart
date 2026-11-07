@@ -76,11 +76,17 @@ class TrackRow extends StatefulWidget {
     this.active = false,
     this.playing = false,
     this.showAlbum = true,
+    this.onToggleFavorite,
   });
 
   final Track track;
   final int index;
   final VoidCallback onTap;
+
+  /// When provided, a tappable heart sits before the duration: filled accent
+  /// when the song is starred, an outline when not. Without it the row keeps
+  /// the old passive heart that only marks already-favourite songs.
+  final VoidCallback? onToggleFavorite;
 
   /// Artwork carried by the song itself; servers only answer some of these.
   final String? coverUrl;
@@ -186,7 +192,12 @@ class _TrackRowState extends State<TrackRow> {
                     ),
                   ),
                 ),
-              if (widget.track.isFavorite)
+              if (widget.onToggleFavorite != null)
+                _FavoriteButton(
+                  favorite: widget.track.isFavorite,
+                  onTap: widget.onToggleFavorite!,
+                )
+              else if (widget.track.isFavorite)
                 const Padding(
                   padding: EdgeInsets.only(left: 8),
                   child: Icon(Icons.favorite, size: 13, color: Mf.accent),
@@ -205,6 +216,34 @@ class _TrackRowState extends State<TrackRow> {
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tappable heart at the tail of a track row. Owns its own hit target so a
+/// tap never reaches the row's play handler.
+class _FavoriteButton extends StatelessWidget {
+  const _FavoriteButton({required this.favorite, required this.onTap});
+
+  final bool favorite;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Tooltip(
+        message: favorite ? '取消收藏' : '收藏',
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+          child: Icon(
+            favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+            size: 16,
+            color: favorite ? Mf.accent : Mf.faint,
           ),
         ),
       ),

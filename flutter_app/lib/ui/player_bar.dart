@@ -101,10 +101,11 @@ class _PlayerBarState extends State<PlayerBar>
     double durationSeconds,
   ) {
     // Mirror of everything right of the scrubber: the total clock (38) + gap
-    // (10) + gap (14) + cast button (30) on mobile, plus the volume icon and
-    // slider (16+8+96+10) on desktop. The transport buttons and the inline
-    // lyric centre over this span so they line up with the scrubber.
-    final rightSpan = isMobilePlatform ? 92.0 : 222.0;
+    // (10) + gap (14) + favourite button (30) + gap (10) + cast button (30)
+    // on mobile, plus the volume icon and slider (16+8+96+10) on desktop. The
+    // transport buttons and the inline lyric centre over this span so they
+    // line up with the scrubber.
+    final rightSpan = isMobilePlatform ? 132.0 : 262.0;
     return Row(
       children: [
         // Like the web transport (flex: 1.2 middle): the song info and the
@@ -186,6 +187,15 @@ class _PlayerBarState extends State<PlayerBar>
                     ),
                   ),
                   const SizedBox(width: 14),
+                  _FavoriteBarButton(
+                    favorite: model.currentTrack?.isFavorite ?? false,
+                    visible: model.currentTrack != null,
+                    onTap: () {
+                      final track = model.currentTrack;
+                      if (track != null) model.toggleFavorite(track);
+                    },
+                  ),
+                  const SizedBox(width: 10),
                   MfIconButton(
                     icon: Icons.cast_rounded,
                     size: 30,
@@ -264,6 +274,14 @@ class _PlayerBarState extends State<PlayerBar>
               size: 30,
               glyph: 20,
               onTap: model.next,
+            ),
+            _FavoriteBarButton(
+              favorite: model.currentTrack?.isFavorite ?? false,
+              visible: model.currentTrack != null,
+              onTap: () {
+                final track = model.currentTrack;
+                if (track != null) model.toggleFavorite(track);
+              },
             ),
             MfIconButton(
               icon: Icons.cast_rounded,
@@ -395,6 +413,33 @@ class _PlayerBarState extends State<PlayerBar>
           color: Mf.cream,
         ),
       ),
+    );
+  }
+}
+
+/// Heart toggle for the transport: filled accent when the current song is
+/// starred, an outline otherwise. Hidden while nothing is queued.
+class _FavoriteBarButton extends StatelessWidget {
+  const _FavoriteBarButton({
+    required this.favorite,
+    required this.visible,
+    required this.onTap,
+  });
+
+  final bool favorite;
+  final bool visible;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!visible) return const SizedBox(width: 30);
+    return MfIconButton(
+      icon: favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+      size: 30,
+      glyph: 18,
+      color: favorite ? Mf.accent : null,
+      tooltip: favorite ? '取消收藏' : '收藏',
+      onTap: onTap,
     );
   }
 }

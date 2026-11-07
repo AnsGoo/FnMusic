@@ -96,9 +96,14 @@ class MusicFreeClient {
 
   Future<Page<Track>> tracks(int page, int size) async {
     final offset = (page - 1).clamp(0, 1 << 30) * size;
+    // Match the web player's default ordering: newest additions first
+    // (getSongs in the web bundle sends sort=created&order=desc by default;
+    // the server default without them is title ASC).
     final root = await _get('rest/api/v1/songs', {
       'offset': '$offset',
       'limit': '$size',
+      'sort': 'created',
+      'order': 'desc',
     });
     final items = _objects(root['songs']).map(_toTrack).toList();
     return Page(items, _int(root, ['total']) ?? offset + items.length);
@@ -173,6 +178,14 @@ class MusicFreeClient {
     final root = await _get('rest/getStarred2.view');
     final starred = _child(root, 'starred2') ?? _child(root, 'starred');
     return _objects(starred?['song']).map(_toTrack).toList();
+  }
+
+  /// Stars or unstars a song (Subsonic star/unstar). The server answers a
+  /// plain ok envelope; a non-ok status is surfaced through [_get].
+  Future<void> setStarred(String songId, bool starred) async {
+    await _get(starred ? 'rest/star.view' : 'rest/unstar.view', {
+      'id': songId,
+    });
   }
 
   Future<List<Track>> searchTracks(String query, {int limit = 60}) async {

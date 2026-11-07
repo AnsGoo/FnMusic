@@ -230,6 +230,7 @@ class _Body extends StatelessWidget {
           playing: audio.trackId == track.id && audio.playing,
           showAlbum: wide,
           onTap: () => model.playFrom(tracks, index),
+          onToggleFavorite: () => model.toggleFavorite(track),
         );
       },
     );

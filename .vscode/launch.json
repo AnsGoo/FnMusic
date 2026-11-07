@@ -1,0 +1,49 @@
+{
+  // 调试配置。Flutter 工程位于 flutter_app/，所以通过 cwd 指定工作目录。
+  // 首次使用前请确认已安装 VS Code 扩展 "Dart-Code.dart-code" 与 "Dart-Code.flutter"。
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // 默认配置：使用 VS Code 状态栏中当前选中的设备（macOS / iOS 模拟器 / Android 真机等）。
+      // templateFor 让编辑器里的 Run/Debug CodeLens 也复用这份配置。
+      "name": "MusicFly (当前选中设备)",
+      "type": "dart",
+      "request": "launch",
+      "cwd": "flutter_app",
+      "program": "lib/main.dart",
+      "flutterMode": "debug",
+      "templateFor": ""
+    },
+    {
+      "name": "MusicFly (macOS)",
+      "type": "dart",
+      "request": "launch",
+      "cwd": "flutter_app",
+      "program": "lib/main.dart",
+      "deviceId": "macos",
+      "flutterMode": "debug"
+    },
+    {
+      // 运行 flutter_app/test 下的全部测试，可在测试代码中打断点。
+      "name": "MusicFly (全部测试)",
+      "type": "dart",
+      "request": "launch",
+      "cwd": "flutter_app",
+      "program": "test",
+      "flutterMode": "debug"
+    },
+    {
+      // 真实服务端集成测试。默认地址为文档中的本地服务端示例，按需修改。
+      "name": "MusicFly (真实服务端集成测试)",
+      "type": "dart",
+      "request": "launch",
+      "cwd": "flutter_app",
+      "program": "test/live_backend_test.dart",
+      "env": {
+        "MUSICFLY_TEST_SERVER": "http://127.0.0.1:14533",
+        "MUSICFLY_TEST_USER": "admin",
+        "MUSICFLY_TEST_PASSWORD": "admin"
+      }
+    }
+  ]
+}

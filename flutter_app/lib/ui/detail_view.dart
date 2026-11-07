@@ -164,6 +164,7 @@ class _DetailViewState extends State<DetailView> {
                       playing: audio.trackId == track.id && audio.playing,
                       showAlbum: false,
                       onTap: () => model.playFrom(detail.tracks, index),
+                      onToggleFavorite: () => model.toggleFavorite(track),
                     );
                   },
                 ),

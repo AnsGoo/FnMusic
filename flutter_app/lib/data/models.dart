@@ -28,6 +28,17 @@ class Track {
   /// decide whether the player can take the raw file or needs a transcode.
   final String? format;
 
+  Track copyWith({bool? isFavorite}) => Track(
+    id: id,
+    title: title,
+    artists: artists,
+    album: album,
+    coverId: coverId,
+    durationSeconds: durationSeconds,
+    isFavorite: isFavorite ?? this.isFavorite,
+    format: format,
+  );
+
   String get artistLine =>
       artists.isEmpty ? '未知艺术家' : artists.map((a) => a.name).join(' / ');
 

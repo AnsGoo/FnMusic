@@ -969,6 +969,52 @@ class AppModel extends ChangeNotifier {
     return player.seek(position);
   }
 
+  /// Stars/unstars a song. Every cached list (queue, section lists, home
+  /// cards, the open detail) is patched optimistically; a failed request
+  /// rolls the change back so the UI never disagrees with the server.
+  Future<void> toggleFavorite(Track track) async {
+    final target = !track.isFavorite;
+    _applyFavorite(track.id, target, track);
+    notifyListeners();
+    try {
+      await client.setStarred(track.id, target);
+    } catch (failure) {
+      if (_disposed) return;
+      _applyFavorite(track.id, !target, track);
+      _error = target ? '收藏失败：$failure' : '取消收藏失败：$failure';
+      notifyListeners();
+    }
+  }
+
+  void _applyFavorite(String id, bool fav, Track original) {
+    List<Track> patchAll(List<Track> list) => [
+      for (final t in list) t.id == id ? t.copyWith(isFavorite: fav) : t,
+    ];
+    _tracks = patchAll(_tracks);
+    _searchTracks = patchAll(_searchTracks);
+    _homeHot = patchAll(_homeHot);
+    _homeFavorites = patchAll(_homeFavorites);
+    _queue = patchAll(_queue);
+    final detail = _detail;
+    if (detail != null && detail.tracks.isNotEmpty) {
+      _detail = detail.copyWith(
+        tracks: [for (final t in detail.tracks) t.id == id ? t.copyWith(isFavorite: fav) : t],
+      );
+    }
+    if (fav) {
+      final starred = original.copyWith(isFavorite: true);
+      if (!_favorites.any((t) => t.id == id)) {
+        _favorites = [starred, ..._favorites];
+      }
+      if (!_homeFavorites.any((t) => t.id == id)) {
+        _homeFavorites = [starred, ..._homeFavorites];
+      }
+    } else {
+      _favorites = _favorites.where((t) => t.id != id).toList();
+      _homeFavorites = _homeFavorites.where((t) => t.id != id).toList();
+    }
+  }
+
   // ---- Cast ---------------------------------------------------------------
 
   /// Scans the local network for DLNA renderers. Safe to call repeatedly —

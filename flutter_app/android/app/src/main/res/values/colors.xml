@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#131010</color>
+    <!-- Matches Mf.bg (#131010) so the launch window blends with the app. -->
+    <color name="launch_bg">#131010</color>
 </resources>
