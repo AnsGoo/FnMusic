@@ -226,17 +226,21 @@ class _FnSearchFieldState extends State<MfSearchField> {
   }
 }
 
+/// The one filled call to action: an icon-and-label pill that lifts on hover
+/// and settles on press, so it reads as a button rather than a coloured label.
 class MfPrimaryButton extends StatefulWidget {
   const MfPrimaryButton({
     super.key,
     required this.label,
     required this.onTap,
+    this.icon,
     this.enabled = true,
-    this.height = 40,
+    this.height = 38,
   });
 
   final String label;
   final VoidCallback? onTap;
+  final IconData? icon;
   final bool enabled;
   final double height;
 
@@ -246,33 +250,78 @@ class MfPrimaryButton extends StatefulWidget {
 
 class _FnPrimaryButtonState extends State<MfPrimaryButton> {
   bool _hovered = false;
+  bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
-    final active = widget.enabled;
-    final color = !active
-        ? Mf.raised
-        : (_hovered ? Mf.accentHover : Mf.accent);
+    final active = widget.enabled && widget.onTap != null;
+    final lifted = active && _hovered;
+    final pressed = active && _pressed;
+    final radius = BorderRadius.circular(10);
+
     return MouseRegion(
       cursor: active ? SystemMouseCursors.click : SystemMouseCursors.basic,
       onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onExit: (_) => setState(() {
+        _hovered = false;
+        _pressed = false;
+      }),
       child: GestureDetector(
+        onTapDown: active ? (_) => setState(() => _pressed = true) : null,
+        onTapUp: active ? (_) => setState(() => _pressed = false) : null,
+        onTapCancel: active ? () => setState(() => _pressed = false) : null,
         onTap: active ? widget.onTap : null,
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOutCubic,
           height: widget.height,
-          alignment: Alignment.center,
+          padding: EdgeInsets.symmetric(horizontal: widget.height * 0.46),
+          transform: Matrix4.translationValues(0, lifted ? -1 : 0, 0),
           decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(9),
-          ),
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              color: active ? Mf.cream : Mf.faint,
-              fontSize: 13.5,
-              fontWeight: FontWeight.w600,
+            borderRadius: radius,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: !active
+                  ? const [Mf.raised, Mf.raised]
+                  : pressed
+                  ? const [Color(0xFFD9502F), Mf.accent]
+                  : lifted
+                  ? const [Color(0xFFFA8362), Mf.accentHover]
+                  : const [Mf.accentHover, Mf.accent],
             ),
+            boxShadow: !active
+                ? null
+                : [
+                    BoxShadow(
+                      color: Color(lifted ? 0x5C2A1009 : 0x3D2A1009),
+                      blurRadius: lifted ? 20 : 12,
+                      offset: Offset(0, lifted ? 8 : 4),
+                    ),
+                  ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (widget.icon case final icon?) ...[
+                Icon(
+                  icon,
+                  size: widget.height * 0.46,
+                  color: active ? Mf.cream : Mf.faint,
+                ),
+                const SizedBox(width: 7),
+              ],
+              Text(
+                widget.label,
+                style: TextStyle(
+                  color: active ? Mf.cream : Mf.faint,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.1,
+                ),
+              ),
+            ],
           ),
         ),
       ),

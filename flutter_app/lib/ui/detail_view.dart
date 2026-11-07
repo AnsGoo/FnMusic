@@ -89,7 +89,8 @@ class _DetailViewState extends State<DetailView> {
                       children: [
                         MfPrimaryButton(
                           label: '播放全部',
-                          height: 34,
+                          icon: Icons.play_arrow_rounded,
+                          height: 36,
                           onTap: detail.tracks.isEmpty
                               ? null
                               : () => model.playFrom(detail.tracks, 0),
