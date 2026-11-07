@@ -1,20 +1,26 @@
+.DS_Store
 *.iml
-.gradle/
 .idea/
-local.properties
-keystore.properties
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
 build/
 **/build/
+
+# Android
+local.properties
+keystore.properties
 .externalNativeBuild/
 .cxx/
 captures/
 *.jks
 *.keystore
-.env
-api-verification-report.json
-fn-connect-verification-report.json
+
+# Python (packaging helpers)
 __pycache__/
 *.pyc
-.kotlin/
-.DS_Store
-*.hprof
+
+# Packaged artifacts
+dist/

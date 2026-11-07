@@ -1,2 +1,0 @@
--keepattributes *Annotation*,Signature
--keep class kotlinx.serialization.** { *; }
