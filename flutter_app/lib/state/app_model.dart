@@ -113,6 +113,13 @@ class AppModel extends ChangeNotifier {
   ServerInfo? _serverInfo;
   bool _probingServer = false;
 
+  // ---- Multi-address failover (LAN preferred) ------------------------------
+
+  /// Periodic reachability probe across all configured server addresses.
+  Timer? _addressTimer;
+  Map<String, ServerInfo> _addressStatuses = {};
+  bool _probingAddresses = false;
+
   Section _section = Section.home;
   Detail? _detail;
 
@@ -192,6 +199,9 @@ class AppModel extends ChangeNotifier {
   String? get error => _error;
   ServerInfo? get serverInfo => _serverInfo;
   bool get probingServer => _probingServer;
+  List<Uri> get serverAddresses => _session?.allAddresses ?? const [];
+  ServerInfo? addressStatus(Uri address) =>
+      _addressStatuses[address.toString()];
   Section get section => _section;
   Detail? get detail => _detail;
   bool get loading => _loading;
@@ -333,6 +343,7 @@ class AppModel extends ChangeNotifier {
     _session = saved;
     _booting = false;
     notifyListeners();
+    _startAddressProbe();
     await select(Section.home);
   }
 
@@ -350,6 +361,7 @@ class AppModel extends ChangeNotifier {
       final active = await client.login(rawUrl, username, password);
       await _store.save(active);
       _session = active;
+      _startAddressProbe();
       await select(Section.home);
     } on MusicFreeException catch (failure) {
       _error = failure.message;
@@ -392,6 +404,7 @@ class AppModel extends ChangeNotifier {
     _homeSearching = false;
     _homeSearch = const SearchAll.empty();
     _serverInfo = null;
+    _stopAddressProbe();
     notifyListeners();
   }
 
@@ -418,6 +431,147 @@ class AppModel extends ChangeNotifier {
   ) async {
     await logout();
     await login(rawUrl, username, password);
+  }
+
+  // ---- Multi-address failover ----------------------------------------------
+
+  /// Probes every configured address on a slow cycle and promotes the best
+  /// reachable one. Among reachable addresses the lowest latency wins, which
+  /// effectively prefers the LAN endpoint whenever both LAN and WAN are up
+  /// (a LAN round trip is always far quicker than a WAN one). The cadence is
+  /// deliberately relaxed — this is failover, not a heartbeat.
+  void _startAddressProbe() {
+    _addressTimer?.cancel();
+    if (_session == null) return;
+    unawaited(_probeAddresses());
+    _addressTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      unawaited(_probeAddresses());
+    });
+  }
+
+  void _stopAddressProbe() {
+    _addressTimer?.cancel();
+    _addressTimer = null;
+    _addressStatuses = {};
+  }
+
+  Future<void> _probeAddresses() async {
+    final session = _session;
+    if (session == null || _probingAddresses || _disposed) return;
+    _probingAddresses = true;
+    try {
+      final addresses = session.allAddresses;
+      final results = await Future.wait([
+        for (final address in addresses) client.pingAddress(address),
+      ]);
+      if (_disposed) return;
+      final next = <String, ServerInfo>{
+        for (var i = 0; i < addresses.length; i++)
+          addresses[i].toString(): results[i],
+      };
+      final changed = !mapEquals(next, _addressStatuses);
+      _addressStatuses = next;
+      _promoteBestAddress(session, addresses, results);
+      if (changed || _session != session) notifyListeners();
+    } finally {
+      _probingAddresses = false;
+    }
+  }
+
+  /// Switches away from the active address only when it is offline, or when
+  /// another address is clearly faster (LAN vs WAN); the hysteresis keeps a
+  /// working connection from flapping over marginal latency noise.
+  void _promoteBestAddress(
+    MusicFreeSession session,
+    List<Uri> addresses,
+    List<ServerInfo> results,
+  ) {
+    Uri? bestAddress;
+    var bestLatency = -1;
+    for (var i = 0; i < addresses.length; i++) {
+      final info = results[i];
+      if (!info.online) continue;
+      final latency = info.latencyMs ?? 1 << 30;
+      if (bestAddress == null || latency < bestLatency) {
+        bestAddress = addresses[i];
+        bestLatency = latency;
+      }
+    }
+    if (bestAddress == null || bestAddress == session.baseUrl) return;
+    final active = results[addresses.indexOf(session.baseUrl)];
+    if (active.online) {
+      final activeLatency = active.latencyMs ?? 1 << 30;
+      // Only hop when the alternative is at least twice as fast with a
+      // meaningful absolute margin.
+      if (!(bestLatency * 2 + 20 < activeLatency)) return;
+    }
+    _applyAddress(bestAddress);
+  }
+
+  /// Re-points the client at [address], persists the choice and refreshes the
+  /// probe state. Never re-authenticates — both endpoints share credentials.
+  Future<void> useServerAddress(Uri address) async {
+    final session = _session;
+    if (session == null || address == session.baseUrl) return;
+    if (!session.allAddresses.contains(address)) return;
+    _applyAddress(address);
+    unawaited(_probeAddresses());
+  }
+
+  void _applyAddress(Uri address) {
+    final session = _session;
+    if (session == null || address == session.baseUrl) return;
+    final updated = session.copyWith(baseUrl: address);
+    client.restore(updated);
+    _session = updated;
+    unawaited(_store.save(updated));
+    debugPrint('[MusicFly] server address switched to $address');
+    notifyListeners();
+  }
+
+  /// Registers an additional endpoint (e.g. the WAN URL for home use) for
+  /// the signed-in server. Duplicates are ignored; returns false when the
+  /// URL cannot be parsed so the dialog can show the problem inline.
+  Future<bool> addServerAddress(String rawUrl) async {
+    final session = _session;
+    if (session == null) return false;
+    final Uri address;
+    try {
+      address = client.normalizeAddress(rawUrl);
+    } on MusicFreeException {
+      return false;
+    }
+    if (session.allAddresses.contains(address)) return true;
+    final updated = session.copyWith(
+      addresses: [...session.allAddresses, address],
+    );
+    client.restore(updated);
+    _session = updated;
+    await _store.save(updated);
+    notifyListeners();
+    unawaited(_probeAddresses());
+    return true;
+  }
+
+  /// Removes an endpoint. When the active one is removed the first remaining
+  /// address takes over; the last address cannot be removed.
+  Future<void> removeServerAddress(Uri address) async {
+    final session = _session;
+    if (session == null) return;
+    final remaining = session.allAddresses
+        .where((existing) => existing != address)
+        .toList();
+    if (remaining.isEmpty) return;
+    final nextActive = session.baseUrl == address
+        ? remaining.first
+        : session.baseUrl;
+    final updated = session.copyWith(baseUrl: nextActive, addresses: remaining);
+    client.restore(updated);
+    _session = updated;
+    _addressStatuses.remove(address.toString());
+    await _store.save(updated);
+    notifyListeners();
+    unawaited(_probeAddresses());
   }
 
   void consumeError() {
@@ -1207,6 +1361,7 @@ class AppModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _addressTimer?.cancel();
     _castStateSub?.cancel();
     _castVolumeSub?.cancel();
     unawaited(_castService?.dispose());

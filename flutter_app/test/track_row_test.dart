@@ -33,8 +33,8 @@ void main() {
     await pumpRow(tester);
 
     expect(find.byType(CoverImage), findsOneWidget);
-    expect(tester.getSize(find.byType(CoverImage)).width, 44);
-    expect(tester.getSize(find.byType(TrackRow)).height, 60);
+    expect(tester.getSize(find.byType(CoverImage)).width, 56);
+    expect(tester.getSize(find.byType(TrackRow)).height, 72);
   });
 
   testWidgets('drops the thumbnail when the album header already shows it', (

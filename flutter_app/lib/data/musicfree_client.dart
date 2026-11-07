@@ -42,6 +42,18 @@ class MusicFreeClient {
 
   void forget() => _session = null;
 
+  /// Re-points every later request at [base] without re-authenticating —
+  /// used by the multi-address prober (LAN/WAN failover).
+  void useAddress(Uri base) {
+    final active = _session;
+    if (active == null) return;
+    _session = active.copyWith(baseUrl: base);
+  }
+
+  /// Parses a user-entered server URL into a normalized [Uri]; shared by
+  /// login and the settings page's "add backup address" flow.
+  Uri normalizeAddress(String rawUrl) => _normalize(rawUrl);
+
   // ---- Session ------------------------------------------------------------
 
   Future<MusicFreeSession> login(
@@ -193,10 +205,53 @@ class MusicFreeClient {
   /// Subsonic API level). Failures become an offline [ServerInfo] instead of
   /// an exception so the page can render a status row.
   Future<ServerInfo> serverInfo() async {
+    final active = _session;
+    if (active == null) return const ServerInfo(online: false);
+    return pingAddress(active.baseUrl);
+  }
+
+  /// Probes one address with a short timeout. Used by the address prober to
+  /// rank LAN vs WAN endpoints; returns an offline [ServerInfo] on any
+  /// failure instead of throwing.
+  Future<ServerInfo> pingAddress(Uri base) async {
+    final active = _session;
+    if (active == null) return const ServerInfo(online: false);
+    final query = <String, String>{
+      'f': 'json',
+      'v': '1.16.1',
+      'c': 'MusicFly',
+      if (active.subsonicToken.isNotEmpty) ...{
+        'u': active.username,
+        't': _md5('${active.subsonicToken}${active.clientSalt}'),
+        's': active.clientSalt,
+      },
+    };
+    final uri = _uri(base, 'rest/ping.view', query);
     final watch = Stopwatch()..start();
     try {
-      final root = await _get('rest/ping.view');
+      final response = await _http
+          .get(uri, headers: _headers())
+          .timeout(const Duration(seconds: 6));
       watch.stop();
+      final online = response.statusCode == 200;
+      Object? decoded;
+      try {
+        decoded = jsonDecode(response.body);
+      } catch (_) {
+        return ServerInfo(online: false, latencyMs: watch.elapsedMilliseconds);
+      }
+      if (decoded is! Map<String, dynamic>) {
+        return ServerInfo(online: false, latencyMs: watch.elapsedMilliseconds);
+      }
+      Map<String, dynamic> root;
+      try {
+        root = _unwrap(decoded);
+      } on MusicFreeException {
+        return ServerInfo(online: false, latencyMs: watch.elapsedMilliseconds);
+      }
+      if (!online || _text(root['status']) != 'ok') {
+        return ServerInfo(online: false, latencyMs: watch.elapsedMilliseconds);
+      }
       return ServerInfo(
         online: true,
         latencyMs: watch.elapsedMilliseconds,
@@ -206,7 +261,7 @@ class MusicFreeClient {
         openSubsonic: root['openSubsonic'] == true,
       );
     } catch (_) {
-      return const ServerInfo(online: false);
+      return ServerInfo(online: false, latencyMs: watch.elapsedMilliseconds);
     }
   }
 

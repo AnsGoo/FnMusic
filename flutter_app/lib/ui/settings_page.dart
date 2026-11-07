@@ -72,6 +72,57 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Future<void> _addAddress() async {
+    final model = context.read<AppModel>();
+    final controller = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Mf.surfaceAlt,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Text(
+          '添加备用地址',
+          style: TextStyle(color: Mf.text, fontSize: 16),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '同一服务器的另一个入口，例如外网地址或局域网地址。',
+              style: TextStyle(color: Mf.textSoft, fontSize: 12.5),
+            ),
+            const SizedBox(height: 14),
+            MfField(
+              label: '服务器地址',
+              value: '',
+              placeholder: 'http://192.168.1.10:4533',
+              onChanged: (value) => controller.text = value,
+              onSubmit: () => Navigator.pop(context, true),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消', style: TextStyle(color: Mf.muted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('添加', style: TextStyle(color: Mf.accentHover)),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (ok != true || !mounted) return;
+    final success = await model.addServerAddress(controller.text);
+    if (!success && mounted) {
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(const SnackBar(content: Text('地址格式不正确，请检查后重试')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final model = context.watch<AppModel>();
@@ -144,12 +195,16 @@ class _SettingsPageState extends State<SettingsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _InfoRow(
-                      label: '地址',
-                      value: session?.baseUrl.toString() ?? '',
-                    ),
+                    for (final address in model.serverAddresses) ...[
+                      if (address != model.serverAddresses.first)
+                        const _RowDivider(),
+                      _AddressRow(
+                        address: address,
+                        active: address == session?.baseUrl,
+                      ),
+                    ],
                     const _RowDivider(),
-                    _StatusRow(model: model),
+                    _AddAddressRow(onAdd: _addAddress),
                     const _RowDivider(),
                     _InfoRow(
                       label: '服务端',
@@ -164,6 +219,15 @@ class _SettingsPageState extends State<SettingsPage> {
                       value: _apiIdentity(model.serverInfo),
                     ),
                   ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Text(
+                  '多地址自动切换：每 5 分钟探测一次所有地址并优选延迟最低的'
+                  '（局域网与外网同时可达时自动走局域网）。',
+                  style: const TextStyle(color: Mf.faint, fontSize: 11),
                 ),
               ),
               const SizedBox(height: 10),
@@ -213,53 +277,117 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 }
 
-/// Status line with a live latency figure and a retry tap target.
-class _StatusRow extends StatelessWidget {
-  const _StatusRow({required this.model});
+/// One configured server endpoint: probe status, tap to promote it to the
+/// active address, delete when there is more than one.
+class _AddressRow extends StatelessWidget {
+  const _AddressRow({required this.address, required this.active});
 
-  final AppModel model;
+  final Uri address;
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
-    final info = model.serverInfo;
-    final probing = model.probingServer;
+    final model = context.watch<AppModel>();
+    final info = model.addressStatus(address);
+    final probed = info != null;
     final online = info?.online ?? false;
-    final label = probing
-        ? '探测中…'
-        : online
-        ? '在线 · ${info!.latencyMs}ms'
-        : '无法连接 · 点按重试';
-    final color = probing
+    final statusColor = !probed
         ? Mf.muted
         : online
         ? const Color(0xFF7BC47F)
         : Mf.accentHover;
+    final statusLabel = !probed
+        ? '探测中…'
+        : online
+        ? '在线 · ${info.latencyMs}ms'
+        : '无法连接';
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         children: [
-          const SizedBox(
-            width: 92,
-            child: Text('状态', style: TextStyle(color: Mf.muted, fontSize: 12)),
+          Icon(
+            active ? Icons.radio_button_checked_rounded : Icons.circle_outlined,
+            size: 15,
+            color: active ? Mf.accent : Mf.faint,
           ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  active ? '当前使用' : '备用地址',
+                  style: TextStyle(
+                    color: active ? Mf.accent : Mf.faint,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                SelectableText(
+                  address.toString(),
+                  style: const TextStyle(color: Mf.textSoft, fontSize: 12.5),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
           Container(
             width: 7,
             height: 7,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-          ),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Text(label, style: TextStyle(color: color, fontSize: 12.5)),
-          ),
-          if (!probing)
-            MfIconButton(
-              icon: Icons.refresh_rounded,
-              size: 26,
-              glyph: 15,
-              tooltip: '重新探测',
-              onTap: model.refreshServerInfo,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: statusColor,
             ),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            statusLabel,
+            style: TextStyle(color: statusColor, fontSize: 11.5),
+          ),
+          if (model.serverAddresses.length > 1) ...[
+            const SizedBox(width: 4),
+            MfIconButton(
+              icon: Icons.close_rounded,
+              size: 24,
+              glyph: 13,
+              tooltip: '删除此地址',
+              onTap: () => model.removeServerAddress(address),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// Tap target adding another endpoint for the same server.
+class _AddAddressRow extends StatelessWidget {
+  const _AddAddressRow({required this.onAdd});
+
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onAdd,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              const Icon(Icons.add_link_rounded, size: 16, color: Mf.muted),
+              const SizedBox(width: 8),
+              Text(
+                '添加备用地址',
+                style: TextStyle(color: Mf.textSoft, fontSize: 12.5),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

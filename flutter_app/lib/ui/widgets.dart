@@ -34,13 +34,24 @@ class CoverImage extends StatelessWidget {
     final shape = circular
         ? const BorderRadius.all(Radius.circular(999))
         : BorderRadius.all(Radius.circular(radius));
+    // The app's vinyl logo doubles as the "no art" placeholder. Its dark disc
+    // melts into the dark surface (same trick as the splash) while the orange
+    // label keeps it recognizable.
+    final logoSize = iconSize ?? (size == null ? null : size! * 0.55);
     final fallback = Container(
       color: Mf.surfaceAlt,
       alignment: Alignment.center,
-      child: Icon(
-        Icons.album_outlined,
-        size: iconSize ?? (size == null ? 28 : size! * 0.42),
-        color: Mf.faint,
+      padding: logoSize == null
+          ? EdgeInsets.zero
+          : EdgeInsets.all(logoSize * 0.25),
+      child: Opacity(
+        opacity: 0.9,
+        child: Image.asset(
+          'assets/logo.png',
+          width: logoSize,
+          height: logoSize,
+          fit: BoxFit.contain,
+        ),
       ),
     );
 
@@ -116,7 +127,7 @@ class _TrackRowState extends State<TrackRow> {
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: Container(
-          height: widget.showCover ? 60 : 52,
+          height: widget.showCover ? 72 : 52,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color: _hovered ? Mf.raised.withValues(alpha: 0.7) : Colors.transparent,
@@ -251,7 +262,7 @@ class _FavoriteButton extends StatelessWidget {
   }
 }
 
-/// 40px cover used at the head of a track row. Hovering dims the art and
+/// 56px cover used at the head of a track row. Hovering dims the art and
 /// reveals a play glyph; the current track keeps a thin accent ring instead.
 ///
 /// Music Free tags most songs with their own artwork but only stores a file
@@ -274,8 +285,8 @@ class _TrackThumb extends StatefulWidget {
 }
 
 class _TrackThumbState extends State<_TrackThumb> {
-  static const _size = 44.0;
-  static const _radius = 6.0;
+  static const _size = 56.0;
+  static const _radius = 8.0;
 
   bool _songArtFailed = false;
 
@@ -310,7 +321,7 @@ class _TrackThumbState extends State<_TrackThumb> {
           CoverImage(
             url: _url,
             radius: _radius,
-            iconSize: 17,
+            iconSize: 22,
             onFailed: _onFailed,
           ),
           if (widget.hovered)
@@ -322,7 +333,7 @@ class _TrackThumbState extends State<_TrackThumb> {
               child: const Center(
                 child: Icon(
                   Icons.play_arrow_rounded,
-                  size: 22,
+                  size: 26,
                   color: Mf.cream,
                 ),
               ),

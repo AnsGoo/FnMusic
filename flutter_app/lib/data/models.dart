@@ -144,13 +144,34 @@ class MusicFreeSession {
     required this.username,
     this.subsonicToken = '',
     required this.clientSalt,
+    this.addresses = const [],
   });
 
+  /// The address every request currently goes to. One of [addresses] —
+  /// the address prober promotes it automatically (LAN preferred).
   final Uri baseUrl;
   final String token;
   final String username;
   final String subsonicToken;
   final String clientSalt;
+
+  /// Every configured server address (e.g. a WAN URL and a LAN URL). May be
+  /// empty for sessions persisted before multi-address support; [baseUrl]
+  /// always stands in for it then.
+  final List<Uri> addresses;
+
+  /// Full address list: [addresses] when present, else just [baseUrl].
+  List<Uri> get allAddresses => addresses.isEmpty ? <Uri>[baseUrl] : addresses;
+
+  MusicFreeSession copyWith({Uri? baseUrl, List<Uri>? addresses}) =>
+      MusicFreeSession(
+        baseUrl: baseUrl ?? this.baseUrl,
+        token: token,
+        username: username,
+        subsonicToken: subsonicToken,
+        clientSalt: clientSalt,
+        addresses: addresses ?? this.addresses,
+      );
 
   String get hostLabel {
     final defaultPort = baseUrl.scheme == 'https' ? 443 : 80;
@@ -161,6 +182,10 @@ class MusicFreeSession {
 
   Map<String, dynamic> toJson() => {
     'baseUrl': baseUrl.toString(),
+    'addresses': [
+      for (final address in allAddresses)
+        if (address != baseUrl) address.toString(),
+    ],
     'token': token,
     'username': username,
     'subsonicToken': subsonicToken,
@@ -173,12 +198,20 @@ class MusicFreeSession {
     if (raw == null || token == null || token.isEmpty) return null;
     final uri = Uri.tryParse(raw);
     if (uri == null) return null;
+    final extras = <Uri>[];
+    for (final entry in (json['addresses'] as List<dynamic>?) ?? const []) {
+      final parsed = Uri.tryParse('$entry');
+      if (parsed != null && parsed.host.isNotEmpty && parsed != uri) {
+        extras.add(parsed);
+      }
+    }
     return MusicFreeSession(
       baseUrl: uri,
       token: token,
       username: (json['username'] as String?) ?? '',
       subsonicToken: (json['subsonicToken'] as String?) ?? '',
       clientSalt: (json['clientSalt'] as String?) ?? '',
+      addresses: [uri, ...extras],
     );
   }
 }

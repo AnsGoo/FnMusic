@@ -98,4 +98,65 @@ void main() {
       expect(formatDuration(0), '--:--');
     });
   });
+
+  group('multi-address session', () {
+    test('round-trips the address list through JSON', () {
+      final session = MusicFreeSession(
+        baseUrl: Uri.parse('http://192.168.1.10:14533'),
+        token: 't',
+        username: 'admin',
+        clientSalt: 'salt',
+        addresses: [
+          Uri.parse('http://192.168.1.10:14533'),
+          Uri.parse('https://music.example.com'),
+        ],
+      );
+      final restored = MusicFreeSession.fromJson(session.toJson());
+      expect(restored, isNotNull);
+      expect(restored!.baseUrl, session.baseUrl);
+      expect(restored.allAddresses, session.allAddresses);
+    });
+
+    test('legacy JSON without addresses still loads', () {
+      final restored = MusicFreeSession.fromJson({
+        'baseUrl': 'http://10.0.2.2:14533',
+        'token': 't',
+        'username': 'admin',
+        'clientSalt': 'salt',
+      });
+      expect(restored, isNotNull);
+      expect(restored!.allAddresses, [Uri.parse('http://10.0.2.2:14533')]);
+    });
+
+    test('allAddresses falls back to baseUrl when empty', () {
+      final session = MusicFreeSession(
+        baseUrl: Uri.parse('http://10.0.2.2:14533'),
+        token: 't',
+        username: 'admin',
+        clientSalt: 'salt',
+      );
+      expect(session.allAddresses, [session.baseUrl]);
+    });
+
+    test('copyWith keeps credentials while re-pointing the address', () {
+      final session = MusicFreeSession(
+        baseUrl: Uri.parse('http://192.168.1.10:14533'),
+        token: 't',
+        username: 'admin',
+        subsonicToken: 'abc',
+        clientSalt: 'salt',
+        addresses: [
+          Uri.parse('http://192.168.1.10:14533'),
+          Uri.parse('https://music.example.com'),
+        ],
+      );
+      final switched = session.copyWith(
+        baseUrl: Uri.parse('https://music.example.com'),
+      );
+      expect(switched.token, 't');
+      expect(switched.subsonicToken, 'abc');
+      expect(switched.baseUrl, Uri.parse('https://music.example.com'));
+      expect(switched.allAddresses, session.allAddresses);
+    });
+  });
 }
