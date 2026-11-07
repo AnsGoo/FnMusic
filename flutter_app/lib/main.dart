@@ -85,7 +85,7 @@ class _SplashOverlay extends StatefulWidget {
 }
 
 class _SplashOverlayState extends State<_SplashOverlay>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   /// Keep the mark on screen long enough to register the tagline even when
   /// the session restores instantly.
   static const _minVisible = Duration(milliseconds: 1200);
