@@ -45,7 +45,7 @@ class _DetailViewState extends State<DetailView> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              FnIconButton(
+              MfIconButton(
                 icon: Icons.arrow_back,
                 size: 30,
                 glyph: 17,
@@ -70,7 +70,7 @@ class _DetailViewState extends State<DetailView> {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Fn.text,
+                        color: Mf.text,
                         fontSize: widget.wide ? 26 : 20,
                         fontWeight: FontWeight.w600,
                         letterSpacing: -0.4,
@@ -82,12 +82,12 @@ class _DetailViewState extends State<DetailView> {
                       detail.subtitle,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Fn.muted, fontSize: 12.5),
+                      style: const TextStyle(color: Mf.muted, fontSize: 12.5),
                     ),
                     const SizedBox(height: 14),
                     Row(
                       children: [
-                        FnPrimaryButton(
+                        MfPrimaryButton(
                           label: '播放全部',
                           height: 34,
                           onTap: detail.tracks.isEmpty
@@ -96,7 +96,7 @@ class _DetailViewState extends State<DetailView> {
                           enabled: detail.tracks.isNotEmpty,
                         ),
                         const SizedBox(width: 10),
-                        if (detail.loading) const FnSpinner(size: 16),
+                        if (detail.loading) const MfSpinner(size: 16),
                       ],
                     ),
                   ],
@@ -105,10 +105,10 @@ class _DetailViewState extends State<DetailView> {
             ],
           ),
         ),
-        const Divider(height: 1, thickness: 1, color: Fn.border),
+        const Divider(height: 1, thickness: 1, color: Mf.border),
         Expanded(
           child: detail.loading && detail.tracks.isEmpty
-              ? const Center(child: FnSpinner())
+              ? const Center(child: MfSpinner())
               : detail.tracks.isEmpty
               ? EmptyState(
                   icon: Icons.music_note_outlined,

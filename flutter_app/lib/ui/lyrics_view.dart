@@ -19,19 +19,19 @@ class LyricsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final model = context.watch<AppModel>();
     return Container(
-      color: Fn.bg,
+      color: Mf.bg,
       child: Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 14, 12, 10),
             child: Row(
               children: [
-                const Icon(Icons.lyrics_outlined, size: 17, color: Fn.muted),
+                const Icon(Icons.lyrics_outlined, size: 17, color: Mf.muted),
                 const SizedBox(width: 8),
                 const Text(
                   '歌词',
                   style: TextStyle(
-                    color: Fn.text,
+                    color: Mf.text,
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
                   ),
@@ -44,11 +44,11 @@ class LyricsPanel extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.right,
-                      style: const TextStyle(color: Fn.faint, fontSize: 12),
+                      style: const TextStyle(color: Mf.faint, fontSize: 12),
                     ),
                   ),
                 const SizedBox(width: 8),
-                FnIconButton(
+                MfIconButton(
                   icon: Icons.close,
                   size: 28,
                   glyph: 15,
@@ -58,13 +58,13 @@ class LyricsPanel extends StatelessWidget {
               ],
             ),
           ),
-          const Divider(height: 1, thickness: 1, color: Fn.border),
+          const Divider(height: 1, thickness: 1, color: Mf.border),
           Expanded(
             child: ValueListenableBuilder<PlaybackState>(
               valueListenable: model.player.state,
               builder: (context, audio, _) {
                 if (model.lyricsLoading) {
-                  return const Center(child: FnSpinner());
+                  return const Center(child: MfSpinner());
                 }
                 final lyrics = model.lyrics;
                 if (lyrics == null) {
@@ -80,7 +80,7 @@ class LyricsPanel extends StatelessWidget {
                     child: Text(
                       lyrics.plain ?? '',
                       style: const TextStyle(
-                        color: Fn.textSoft,
+                        color: Mf.textSoft,
                         fontSize: 14,
                         height: 1.9,
                       ),
@@ -155,7 +155,7 @@ class _TimedLyricsState extends State<_TimedLyrics> {
             child: AnimatedDefaultTextStyle(
               duration: const Duration(milliseconds: 200),
               style: TextStyle(
-                color: active ? Fn.accent : Fn.muted,
+                color: active ? Mf.accent : Mf.muted,
                 fontSize: active ? 17 : 14.5,
                 fontWeight: active ? FontWeight.w600 : FontWeight.w400,
                 height: 1.4,

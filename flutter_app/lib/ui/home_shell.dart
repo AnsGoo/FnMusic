@@ -29,7 +29,7 @@ class _HomeShellState extends State<HomeShell> {
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 900;
         return Scaffold(
-          backgroundColor: Fn.bg,
+          backgroundColor: Mf.bg,
           body: wide ? _desktop(model) : _compact(model),
         );
       },
@@ -50,7 +50,7 @@ class _HomeShellState extends State<HomeShell> {
       messenger?.showSnackBar(
         SnackBar(
           content: Text(error),
-          backgroundColor: Fn.raised,
+          backgroundColor: Mf.raised,
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 3),
         ),
@@ -63,7 +63,7 @@ class _HomeShellState extends State<HomeShell> {
     return Row(
       children: [
         _Sidebar(model: model),
-        const VerticalDivider(width: 1, thickness: 1, color: Fn.border),
+        const VerticalDivider(width: 1, thickness: 1, color: Mf.border),
         Expanded(
           child: Column(
             children: [
@@ -112,7 +112,7 @@ class _Sidebar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 208,
-      color: Fn.surface,
+      color: Mf.surface,
       padding: const EdgeInsets.fromLTRB(14, 18, 14, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -123,7 +123,7 @@ class _Sidebar extends StatelessWidget {
               children: [
                 ClipOval(
                   child: Image.asset(
-                    'assets/music_free_logo.png',
+                    'assets/logo.png',
                     width: 30,
                     height: 30,
                     filterQuality: FilterQuality.high,
@@ -131,12 +131,12 @@ class _Sidebar extends StatelessWidget {
                 ),
                 const SizedBox(width: 9),
                 const Text(
-                  'Music Free',
+                  '乐记',
                   style: TextStyle(
-                    color: Fn.text,
+                    color: Mf.text,
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    letterSpacing: -0.2,
+                    letterSpacing: 0.6,
                   ),
                 ),
               ],
@@ -152,7 +152,7 @@ class _Sidebar extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: Fn.surfaceAlt,
+              color: Mf.surfaceAlt,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
@@ -165,19 +165,19 @@ class _Sidebar extends StatelessWidget {
                         model.session?.username ?? '',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Fn.textSoft, fontSize: 12),
+                        style: const TextStyle(color: Mf.textSoft, fontSize: 12),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         model.session?.hostLabel ?? '',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Fn.faint, fontSize: 11),
+                        style: const TextStyle(color: Mf.faint, fontSize: 11),
                       ),
                     ],
                   ),
                 ),
-                FnIconButton(
+                MfIconButton(
                   icon: Icons.logout_rounded,
                   size: 26,
                   glyph: 15,
@@ -224,8 +224,8 @@ class _NavItemState extends State<_NavItem> {
   Widget build(BuildContext context) {
     final selected = widget.selected;
     final color = selected
-        ? Fn.accent
-        : (_hovered ? Fn.text : Fn.muted);
+        ? Mf.accent
+        : (_hovered ? Mf.text : Mf.muted);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
@@ -238,8 +238,8 @@ class _NavItemState extends State<_NavItem> {
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
           decoration: BoxDecoration(
             color: selected
-                ? Fn.accentWash
-                : (_hovered ? Fn.raised.withValues(alpha: 0.6) : Colors.transparent),
+                ? Mf.accentWash
+                : (_hovered ? Mf.raised.withValues(alpha: 0.6) : Colors.transparent),
             borderRadius: BorderRadius.circular(7),
           ),
           child: Row(
@@ -271,8 +271,8 @@ class _BottomNav extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
-        color: Fn.surface,
-        border: Border(top: BorderSide(color: Fn.border)),
+        color: Mf.surface,
+        border: Border(top: BorderSide(color: Mf.border)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -302,7 +302,7 @@ class _BottomNavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? Fn.accent : Fn.muted;
+    final color = selected ? Mf.accent : Mf.muted;
     return Expanded(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,

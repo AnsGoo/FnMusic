@@ -41,8 +41,8 @@ class _PlayerBarState extends State<PlayerBar> {
 
         return Container(
           decoration: const BoxDecoration(
-            color: Fn.surface,
-            border: Border(top: BorderSide(color: Fn.border)),
+            color: Mf.surface,
+            border: Border(top: BorderSide(color: Mf.border)),
           ),
           padding: EdgeInsets.fromLTRB(
             widget.wide ? 18 : 12,
@@ -78,7 +78,7 @@ class _PlayerBarState extends State<PlayerBar> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  FnIconButton(
+                  MfIconButton(
                     icon: Icons.skip_previous_rounded,
                     size: 30,
                     glyph: 20,
@@ -88,7 +88,7 @@ class _PlayerBarState extends State<PlayerBar> {
                   const SizedBox(width: 4),
                   _playButton(model, audio),
                   const SizedBox(width: 4),
-                  FnIconButton(
+                  MfIconButton(
                     icon: Icons.skip_next_rounded,
                     size: 30,
                     glyph: 20,
@@ -96,7 +96,7 @@ class _PlayerBarState extends State<PlayerBar> {
                     onTap: model.next,
                   ),
                   const SizedBox(width: 6),
-                  FnIconButton(
+                  MfIconButton(
                     icon: Icons.lyrics_outlined,
                     size: 30,
                     glyph: 17,
@@ -113,7 +113,7 @@ class _PlayerBarState extends State<PlayerBar> {
                       formatClock(position),
                       textAlign: TextAlign.right,
                       style: const TextStyle(
-                        color: Fn.faint,
+                        color: Mf.faint,
                         fontSize: 11,
                         fontFeatures: [FontFeature.tabularFigures()],
                       ),
@@ -129,7 +129,7 @@ class _PlayerBarState extends State<PlayerBar> {
                     child: Text(
                       formatClock(durationSeconds),
                       style: const TextStyle(
-                        color: Fn.faint,
+                        color: Mf.faint,
                         fontSize: 11,
                         fontFeatures: [FontFeature.tabularFigures()],
                       ),
@@ -145,14 +145,14 @@ class _PlayerBarState extends State<PlayerBar> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              const Icon(Icons.volume_up_rounded, size: 16, color: Fn.faint),
+              const Icon(Icons.volume_up_rounded, size: 16, color: Mf.faint),
               const SizedBox(width: 8),
               SizedBox(
                 width: 96,
-                child: FnScrubber(
+                child: MfScrubber(
                   fraction: model.volume,
-                  thumbColor: Fn.textSoft,
-                  activeColor: Fn.muted,
+                  thumbColor: Mf.textSoft,
+                  activeColor: Mf.muted,
                   onScrub: model.setVolume,
                 ),
               ),
@@ -175,20 +175,20 @@ class _PlayerBarState extends State<PlayerBar> {
         Row(
           children: [
             Expanded(child: _nowPlaying(model, audio, 40)),
-            FnIconButton(
+            MfIconButton(
               icon: Icons.skip_previous_rounded,
               size: 30,
               glyph: 20,
               onTap: model.previous,
             ),
             _playButton(model, audio),
-            FnIconButton(
+            MfIconButton(
               icon: Icons.skip_next_rounded,
               size: 30,
               glyph: 20,
               onTap: model.next,
             ),
-            FnIconButton(
+            MfIconButton(
               icon: Icons.lyrics_outlined,
               size: 30,
               glyph: 17,
@@ -204,7 +204,7 @@ class _PlayerBarState extends State<PlayerBar> {
 
   /// Shared by both layouts: dragging previews a position, releasing seeks.
   Widget _scrubber(AppModel model, double position, double durationSeconds) {
-    return FnScrubber(
+    return MfScrubber(
       fraction: durationSeconds > 0
           ? (position / durationSeconds).clamp(0.0, 1.0)
           : 0,
@@ -237,7 +237,7 @@ class _PlayerBarState extends State<PlayerBar> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: Fn.text,
+                  color: Mf.text,
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
                 ),
@@ -248,7 +248,7 @@ class _PlayerBarState extends State<PlayerBar> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: audio.error != null ? Fn.accent : Fn.faint,
+                  color: audio.error != null ? Mf.accent : Mf.faint,
                   fontSize: 11.5,
                 ),
               ),
@@ -268,12 +268,12 @@ class _PlayerBarState extends State<PlayerBar> {
         height: 34,
         decoration: const BoxDecoration(
           shape: BoxShape.circle,
-          color: Fn.accent,
+          color: Mf.accent,
         ),
         child: Icon(
           playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
           size: 22,
-          color: Fn.cream,
+          color: Mf.cream,
         ),
       ),
     );

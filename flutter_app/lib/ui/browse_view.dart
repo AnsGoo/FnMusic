@@ -51,7 +51,7 @@ class _BrowseViewState extends State<BrowseView> {
         return Column(
           children: [
             _Toolbar(wide: wide),
-            const Divider(height: 1, thickness: 1, color: Fn.border),
+            const Divider(height: 1, thickness: 1, color: Mf.border),
             Expanded(child: _Body(scroll: _scroll, wide: wide)),
           ],
         );
@@ -87,7 +87,7 @@ class _Toolbar extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Fn.text,
+                      color: Mf.text,
                       fontSize: 20,
                       fontWeight: FontWeight.w600,
                       letterSpacing: -0.3,
@@ -98,7 +98,7 @@ class _Toolbar extends StatelessWidget {
                     model.headerSubtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Fn.faint, fontSize: 11.5),
+                    style: const TextStyle(color: Mf.faint, fontSize: 11.5),
                   ),
                 ],
               ),
@@ -107,7 +107,7 @@ class _Toolbar extends StatelessWidget {
           if (wide) ...[
             SizedBox(
               width: 228,
-              child: FnSearchField(
+              child: MfSearchField(
                 value: model.query,
                 onChanged: model.updateQuery,
                 onSubmit: model.submitSearch,
@@ -115,14 +115,14 @@ class _Toolbar extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            FnIconButton(
+            MfIconButton(
               icon: Icons.search,
               size: 34,
               glyph: 17,
               tooltip: '搜索',
               onTap: model.submitSearch,
             ),
-            FnIconButton(
+            MfIconButton(
               icon: Icons.refresh,
               size: 34,
               glyph: 17,
@@ -150,7 +150,7 @@ class _Body extends StatelessWidget {
       return DetailView(detail: model.detail!, wide: wide);
     }
     if (model.loading && model.tracks.isEmpty && model.albums.isEmpty) {
-      return const Center(child: FnSpinner());
+      return const Center(child: MfSpinner());
     }
 
     final Widget content = switch (model.section) {
@@ -196,7 +196,7 @@ class _Body extends StatelessWidget {
 
   Widget _searchResults(AppModel model, bool wide) {
     final results = model.searchResults;
-    if (model.loading) return const Center(child: FnSpinner());
+    if (model.loading) return const Center(child: MfSpinner());
     if (results.isEmpty) {
       return EmptyState(
         icon: Icons.search_off,
@@ -334,7 +334,7 @@ class _PagedList extends StatelessWidget {
         if (index >= itemCount) {
           return const Padding(
             padding: EdgeInsets.symmetric(vertical: 18),
-            child: Center(child: FnSpinner(size: 16)),
+            child: Center(child: MfSpinner(size: 16)),
           );
         }
         return builder(context, index);
@@ -386,14 +386,14 @@ class _GridCardState extends State<_GridCard> {
                     Positioned.fill(
                       child: DecoratedBox(
                         decoration: BoxDecoration(
-                          color: Fn.bg.withValues(alpha: 0.28),
+                          color: Mf.bg.withValues(alpha: 0.28),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: const Center(
                           child: Icon(
                             Icons.play_circle_fill,
                             size: 40,
-                            color: Fn.cream,
+                            color: Mf.cream,
                           ),
                         ),
                       ),
@@ -407,7 +407,7 @@ class _GridCardState extends State<_GridCard> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: Fn.text,
+                color: Mf.text,
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
               ),
@@ -417,7 +417,7 @@ class _GridCardState extends State<_GridCard> {
               widget.subtitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Fn.faint, fontSize: 11.5),
+              style: const TextStyle(color: Mf.faint, fontSize: 11.5),
             ),
           ],
         ),
@@ -457,7 +457,7 @@ class _ArtistTileState extends State<_ArtistTile> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: _hovered ? Fn.raised.withValues(alpha: 0.7) : Colors.transparent,
+            color: _hovered ? Mf.raised.withValues(alpha: 0.7) : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Row(
@@ -477,19 +477,19 @@ class _ArtistTileState extends State<_ArtistTile> {
                       artist.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Fn.text, fontSize: 13.5),
+                      style: const TextStyle(color: Mf.text, fontSize: 13.5),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       artist.trackCount > 0
                           ? '${artist.albumCount} 张专辑 · ${artist.trackCount} 首'
                           : '${artist.albumCount} 张专辑',
-                      style: const TextStyle(color: Fn.faint, fontSize: 11.5),
+                      style: const TextStyle(color: Mf.faint, fontSize: 11.5),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right, size: 18, color: Fn.faint),
+              const Icon(Icons.chevron_right, size: 18, color: Mf.faint),
             ],
           ),
         ),

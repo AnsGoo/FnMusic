@@ -5,10 +5,10 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = FnMusic
+PRODUCT_NAME = MusicFly
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.seasonyuu.fnmusic
+PRODUCT_BUNDLE_IDENTIFIER = com.seasonyuu.musicfly
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 com.seasonyuu. All rights reserved.

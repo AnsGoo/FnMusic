@@ -1,12 +1,10 @@
-/// The Music Free palette, carried over from the old desktop theme so the
-/// Flutter build keeps the same warm near-black, vermilion label and cream
-/// lettering.
+/// The MusicFly palette: warm near-black, vermilion accent, cream lettering.
 library;
 
 import 'package:flutter/material.dart';
 
-class Fn {
-  const Fn._();
+class Mf {
+  const Mf._();
 
   static const bg = Color(0xFF131010);
   static const surface = Color(0xFF1B1715);
@@ -28,41 +26,41 @@ class Fn {
   static const faint = Color(0xFF6B6259);
 }
 
-ThemeData buildFnTheme() {
+ThemeData buildMfTheme() {
   final base = ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
-    scaffoldBackgroundColor: Fn.bg,
+    scaffoldBackgroundColor: Mf.bg,
     colorScheme: const ColorScheme.dark(
-      primary: Fn.accent,
-      onPrimary: Fn.cream,
-      surface: Fn.surface,
-      onSurface: Fn.text,
-      surfaceContainerHighest: Fn.surfaceAlt,
-      onSurfaceVariant: Fn.textSoft,
-      outline: Fn.border,
-      error: Fn.accent,
+      primary: Mf.accent,
+      onPrimary: Mf.cream,
+      surface: Mf.surface,
+      onSurface: Mf.text,
+      surfaceContainerHighest: Mf.surfaceAlt,
+      onSurfaceVariant: Mf.textSoft,
+      outline: Mf.border,
+      error: Mf.accent,
     ),
   );
 
   return base.copyWith(
     textTheme: base.textTheme.apply(
-      bodyColor: Fn.text,
-      displayColor: Fn.text,
+      bodyColor: Mf.text,
+      displayColor: Mf.text,
     ),
-    dividerColor: Fn.border,
+    dividerColor: Mf.border,
     splashFactory: NoSplash.splashFactory,
     highlightColor: Colors.transparent,
-    hoverColor: Fn.raised,
+    hoverColor: Mf.raised,
     tooltipTheme: const TooltipThemeData(
       decoration: BoxDecoration(
-        color: Fn.raised,
+        color: Mf.raised,
         borderRadius: BorderRadius.all(Radius.circular(6)),
       ),
-      textStyle: TextStyle(color: Fn.textSoft, fontSize: 12),
+      textStyle: TextStyle(color: Mf.textSoft, fontSize: 12),
     ),
     scrollbarTheme: ScrollbarThemeData(
-      thumbColor: WidgetStatePropertyAll(Fn.border.withValues(alpha: 0.9)),
+      thumbColor: WidgetStatePropertyAll(Mf.border.withValues(alpha: 0.9)),
       radius: const Radius.circular(4),
       thickness: const WidgetStatePropertyAll(6),
     ),

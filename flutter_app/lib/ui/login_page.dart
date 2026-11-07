@@ -41,7 +41,7 @@ class _LoginPageState extends State<LoginPage> {
   Widget build(BuildContext context) {
     final model = context.watch<AppModel>();
     return Scaffold(
-      backgroundColor: Fn.bg,
+      backgroundColor: Mf.bg,
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -54,7 +54,7 @@ class _LoginPageState extends State<LoginPage> {
                 Center(
                   child: ClipOval(
                     child: Image.asset(
-                      'assets/music_free_logo.png',
+                      'assets/logo.png',
                       width: 104,
                       height: 104,
                       filterQuality: FilterQuality.high,
@@ -63,36 +63,47 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 const SizedBox(height: 22),
                 const Text(
-                  'Music Free',
+                  'MUSICFLY',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: Fn.text,
+                    color: Mf.faint,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 2.6,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                const Text(
+                  '乐记',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Mf.text,
                     fontSize: 26,
                     fontWeight: FontWeight.w600,
-                    letterSpacing: -0.4,
+                    letterSpacing: 1.2,
                   ),
                 ),
                 const SizedBox(height: 6),
                 const Text(
                   '让听歌这件事简单一点',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Fn.muted, fontSize: 13),
+                  style: TextStyle(color: Mf.muted, fontSize: 13),
                 ),
                 const SizedBox(height: 26),
-                FnField(
+                MfField(
                   label: '服务器地址',
                   value: _url.text,
                   placeholder: 'http://192.168.1.10:4533',
                   onChanged: (value) => _url.text = value,
                 ),
                 const SizedBox(height: 10),
-                FnField(
+                MfField(
                   label: '账号',
                   value: _username.text,
                   onChanged: (value) => _username.text = value,
                 ),
                 const SizedBox(height: 10),
-                FnField(
+                MfField(
                   label: '密码',
                   value: _password.text,
                   password: true,
@@ -107,20 +118,20 @@ class _LoginPageState extends State<LoginPage> {
                       vertical: 9,
                     ),
                     decoration: BoxDecoration(
-                      color: Fn.accentWash,
+                      color: Mf.accentWash,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       model.error!,
                       style: const TextStyle(
-                        color: Fn.accentHover,
+                        color: Mf.accentHover,
                         fontSize: 12,
                       ),
                     ),
                   ),
                 ],
                 const SizedBox(height: 22),
-                FnPrimaryButton(
+                MfPrimaryButton(
                   label: model.connecting ? '连接中…' : '连接',
                   onTap: model.connecting ? null : _submit,
                   enabled: !model.connecting,
@@ -129,7 +140,7 @@ class _LoginPageState extends State<LoginPage> {
                 const Text(
                   '需要 Music Free 服务端 · 兼容 Navidrome / Subsonic',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Fn.faint, fontSize: 11.5),
+                  style: TextStyle(color: Mf.faint, fontSize: 11.5),
                 ),
               ],
             ),

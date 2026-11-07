@@ -13,20 +13,20 @@ import 'ui/widgets.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   HttpOverrides.global = LocalNetworkDirect();
-  runApp(const FnMusicApp());
+  runApp(const MusicFlyApp());
 }
 
-class FnMusicApp extends StatelessWidget {
-  const FnMusicApp({super.key});
+class MusicFlyApp extends StatelessWidget {
+  const MusicFlyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (_) => AppModel()..restoreSession(),
       child: MaterialApp(
-        title: 'FnMusic',
+        title: 'MusicFly',
         debugShowCheckedModeBanner: false,
-        theme: buildFnTheme(),
+        theme: buildMfTheme(),
         home: const _RootPage(),
       ),
     );
@@ -52,21 +52,21 @@ class _Splash extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Fn.bg,
+      backgroundColor: Mf.bg,
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ClipOval(
               child: Image.asset(
-                'assets/music_free_logo.png',
+                'assets/logo.png',
                 width: 72,
                 height: 72,
                 filterQuality: FilterQuality.high,
               ),
             ),
             const SizedBox(height: 18),
-            const FnSpinner(size: 16),
+            const MfSpinner(size: 16),
           ],
         ),
       ),

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:fnmusic/data/models.dart';
-import 'package:fnmusic/ui/widgets.dart';
+import 'package:musicfly/data/models.dart';
+import 'package:musicfly/ui/widgets.dart';
 
 void main() {
   const track = Track(id: 't1', title: '第一首');

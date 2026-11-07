@@ -58,8 +58,8 @@ class PlaybackState {
   );
 }
 
-class FnPlayer {
-  FnPlayer();
+class MfPlayer {
+  MfPlayer();
 
   /// Created on the first play so widget tests (and the splash screen) never
   /// touch a platform channel.

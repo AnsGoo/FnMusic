@@ -199,7 +199,7 @@ class MusicFreeClient {
   String _mediaUrl(String path, Map<String, String> params) {
     final active = _session;
     if (active == null) throw AuthException('尚未登录');
-    final query = <String, String>{'v': '1.16.1', 'c': 'FnMusic', ...params};
+    final query = <String, String>{'v': '1.16.1', 'c': 'MusicFly', ...params};
     if (active.subsonicToken.isNotEmpty) {
       query['u'] = active.username;
       query['t'] = _md5('${active.subsonicToken}${active.clientSalt}');
@@ -219,7 +219,7 @@ class MusicFreeClient {
     final uri = _uri(active.baseUrl, path, {
       'f': 'json',
       'v': '1.16.1',
-      'c': 'FnMusic',
+      'c': 'MusicFly',
       ...params,
     });
     return _send(() => _http.get(uri, headers: _headers()));

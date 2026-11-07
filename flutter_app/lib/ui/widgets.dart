@@ -35,12 +35,12 @@ class CoverImage extends StatelessWidget {
         ? const BorderRadius.all(Radius.circular(999))
         : BorderRadius.all(Radius.circular(radius));
     final fallback = Container(
-      color: Fn.surfaceAlt,
+      color: Mf.surfaceAlt,
       alignment: Alignment.center,
       child: Icon(
         Icons.album_outlined,
         size: iconSize ?? (size == null ? 28 : size! * 0.42),
-        color: Fn.faint,
+        color: Mf.faint,
       ),
     );
 
@@ -50,7 +50,7 @@ class CoverImage extends StatelessWidget {
             imageUrl: url!,
             fit: BoxFit.cover,
             fadeInDuration: const Duration(milliseconds: 140),
-            placeholder: (_, _) => Container(color: Fn.surfaceAlt),
+            placeholder: (_, _) => Container(color: Mf.surfaceAlt),
             errorWidget: (_, _, _) => fallback,
             errorListener: onFailed == null ? null : (_) => onFailed!(),
           );
@@ -113,7 +113,7 @@ class _TrackRowState extends State<TrackRow> {
           height: widget.showCover ? 60 : 52,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: _hovered ? Fn.raised.withValues(alpha: 0.7) : Colors.transparent,
+            color: _hovered ? Mf.raised.withValues(alpha: 0.7) : Colors.transparent,
             borderRadius: BorderRadius.circular(7),
           ),
           child: Row(
@@ -126,12 +126,12 @@ class _TrackRowState extends State<TrackRow> {
                             ? Icons.volume_up_rounded
                             : Icons.play_arrow_rounded,
                         size: 15,
-                        color: Fn.accent,
+                        color: Mf.accent,
                       )
                     : Text(
                         '${widget.index + 1}',
                         style: const TextStyle(
-                          color: Fn.faint,
+                          color: Mf.faint,
                           fontSize: 12,
                           fontFeatures: [FontFeature.tabularFigures()],
                         ),
@@ -158,7 +158,7 @@ class _TrackRowState extends State<TrackRow> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: accent ? Fn.accent : Fn.text,
+                        color: accent ? Mf.accent : Mf.text,
                         fontSize: 13.5,
                         fontWeight: accent ? FontWeight.w500 : FontWeight.w400,
                       ),
@@ -168,7 +168,7 @@ class _TrackRowState extends State<TrackRow> {
                       widget.track.artistLine,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Fn.faint, fontSize: 11.5),
+                      style: const TextStyle(color: Mf.faint, fontSize: 11.5),
                     ),
                   ],
                 ),
@@ -182,14 +182,14 @@ class _TrackRowState extends State<TrackRow> {
                       widget.track.album?.name ?? '',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Fn.muted, fontSize: 12),
+                      style: const TextStyle(color: Mf.muted, fontSize: 12),
                     ),
                   ),
                 ),
               if (widget.track.isFavorite)
                 const Padding(
                   padding: EdgeInsets.only(left: 8),
-                  child: Icon(Icons.favorite, size: 13, color: Fn.accent),
+                  child: Icon(Icons.favorite, size: 13, color: Mf.accent),
                 ),
               const SizedBox(width: 12),
               SizedBox(
@@ -198,7 +198,7 @@ class _TrackRowState extends State<TrackRow> {
                   widget.track.durationLabel,
                   textAlign: TextAlign.right,
                   style: const TextStyle(
-                    color: Fn.faint,
+                    color: Mf.faint,
                     fontSize: 12,
                     fontFeatures: [FontFeature.tabularFigures()],
                   ),
@@ -275,14 +275,14 @@ class _TrackThumbState extends State<_TrackThumb> {
           if (widget.hovered)
             DecoratedBox(
               decoration: BoxDecoration(
-                color: Fn.bg.withValues(alpha: 0.45),
+                color: Mf.bg.withValues(alpha: 0.45),
                 borderRadius: BorderRadius.circular(_radius),
               ),
               child: const Center(
                 child: Icon(
                   Icons.play_arrow_rounded,
                   size: 22,
-                  color: Fn.cream,
+                  color: Mf.cream,
                 ),
               ),
             )
@@ -291,7 +291,7 @@ class _TrackThumbState extends State<_TrackThumb> {
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(_radius),
-                  border: Border.all(color: Fn.accent, width: 1.2),
+                  border: Border.all(color: Mf.accent, width: 1.2),
                 ),
               ),
             ),
@@ -320,14 +320,14 @@ class EmptyState extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 34, color: Fn.border),
+          Icon(icon, size: 34, color: Mf.border),
           const SizedBox(height: 14),
-          Text(title, style: const TextStyle(color: Fn.muted, fontSize: 13.5)),
+          Text(title, style: const TextStyle(color: Mf.muted, fontSize: 13.5)),
           if (detail != null) ...[
             const SizedBox(height: 6),
             Text(
               detail!,
-              style: const TextStyle(color: Fn.faint, fontSize: 12),
+              style: const TextStyle(color: Mf.faint, fontSize: 12),
               textAlign: TextAlign.center,
             ),
           ],
@@ -337,8 +337,8 @@ class EmptyState extends StatelessWidget {
   }
 }
 
-class FnSpinner extends StatelessWidget {
-  const FnSpinner({super.key, this.size = 18});
+class MfSpinner extends StatelessWidget {
+  const MfSpinner({super.key, this.size = 18});
 
   final double size;
 
@@ -349,7 +349,7 @@ class FnSpinner extends StatelessWidget {
       height: size,
       child: const CircularProgressIndicator(
         strokeWidth: 2,
-        color: Fn.muted,
+        color: Mf.muted,
       ),
     );
   }
@@ -366,7 +366,7 @@ class SectionLabel extends StatelessWidget {
     return Text(
       text.toUpperCase(),
       style: const TextStyle(
-        color: Fn.faint,
+        color: Mf.faint,
         fontSize: 10.5,
         fontWeight: FontWeight.w600,
         letterSpacing: 1.1,

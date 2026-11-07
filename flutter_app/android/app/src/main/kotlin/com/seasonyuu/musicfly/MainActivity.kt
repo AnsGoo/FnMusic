@@ -1,4 +1,4 @@
-package com.seasonyuu.fnmusic
+package com.seasonyuu.musicfly
 
 import io.flutter.embedding.android.FlutterActivity
 

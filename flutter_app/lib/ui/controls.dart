@@ -7,8 +7,8 @@ import 'package:flutter/material.dart';
 
 import 'theme.dart';
 
-class FnField extends StatefulWidget {
-  const FnField({
+class MfField extends StatefulWidget {
+  const MfField({
     super.key,
     required this.label,
     required this.value,
@@ -26,10 +26,10 @@ class FnField extends StatefulWidget {
   final VoidCallback? onSubmit;
 
   @override
-  State<FnField> createState() => _FnFieldState();
+  State<MfField> createState() => _FnFieldState();
 }
 
-class _FnFieldState extends State<FnField> {
+class _FnFieldState extends State<MfField> {
   late final TextEditingController _controller = TextEditingController(
     text: widget.value,
   );
@@ -46,7 +46,7 @@ class _FnFieldState extends State<FnField> {
   }
 
   @override
-  void didUpdateWidget(covariant FnField oldWidget) {
+  void didUpdateWidget(covariant MfField oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.value != _controller.text) {
       _controller.text = widget.value;
@@ -68,7 +68,7 @@ class _FnFieldState extends State<FnField> {
         Text(
           widget.label,
           style: TextStyle(
-            color: _focused ? Fn.accent : Fn.muted,
+            color: _focused ? Mf.accent : Mf.muted,
             fontSize: 11.5,
             fontWeight: FontWeight.w500,
           ),
@@ -78,10 +78,10 @@ class _FnFieldState extends State<FnField> {
           height: 38,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: Fn.surfaceAlt,
+            color: Mf.surfaceAlt,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: _focused ? Fn.accent : Fn.border,
+              color: _focused ? Mf.accent : Mf.border,
             ),
           ),
           child: Center(
@@ -91,14 +91,14 @@ class _FnFieldState extends State<FnField> {
               onChanged: widget.onChanged,
               obscureText: widget.password,
               onSubmitted: (_) => widget.onSubmit?.call(),
-              cursorColor: Fn.accent,
+              cursorColor: Mf.accent,
               cursorWidth: 1.4,
-              style: const TextStyle(fontSize: 13, color: Fn.text),
+              style: const TextStyle(fontSize: 13, color: Mf.text),
               decoration: InputDecoration(
                 isCollapsed: true,
                 border: InputBorder.none,
                 hintText: widget.placeholder,
-                hintStyle: const TextStyle(color: Fn.faint, fontSize: 13),
+                hintStyle: const TextStyle(color: Mf.faint, fontSize: 13),
               ),
             ),
           ),
@@ -108,8 +108,8 @@ class _FnFieldState extends State<FnField> {
   }
 }
 
-class FnSearchField extends StatefulWidget {
-  const FnSearchField({
+class MfSearchField extends StatefulWidget {
+  const MfSearchField({
     super.key,
     required this.value,
     required this.onChanged,
@@ -125,10 +125,10 @@ class FnSearchField extends StatefulWidget {
   final VoidCallback? onClear;
 
   @override
-  State<FnSearchField> createState() => _FnSearchFieldState();
+  State<MfSearchField> createState() => _FnSearchFieldState();
 }
 
-class _FnSearchFieldState extends State<FnSearchField> {
+class _FnSearchFieldState extends State<MfSearchField> {
   late final TextEditingController _controller = TextEditingController(
     text: widget.value,
   );
@@ -146,7 +146,7 @@ class _FnSearchFieldState extends State<FnSearchField> {
   }
 
   @override
-  void didUpdateWidget(covariant FnSearchField oldWidget) {
+  void didUpdateWidget(covariant MfSearchField oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.value != _controller.text) {
       _controller.text = widget.value;
@@ -163,8 +163,8 @@ class _FnSearchFieldState extends State<FnSearchField> {
   @override
   Widget build(BuildContext context) {
     final borderColor = _focused
-        ? Fn.accent
-        : (_hovered ? Fn.muted : Fn.border);
+        ? Mf.accent
+        : (_hovered ? Mf.muted : Mf.border);
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
@@ -172,7 +172,7 @@ class _FnSearchFieldState extends State<FnSearchField> {
         height: 34,
         padding: const EdgeInsets.only(left: 10, right: 3),
         decoration: BoxDecoration(
-          color: Fn.surfaceAlt,
+          color: Mf.surfaceAlt,
           borderRadius: BorderRadius.circular(9),
           border: Border.all(color: borderColor),
         ),
@@ -181,7 +181,7 @@ class _FnSearchFieldState extends State<FnSearchField> {
             Icon(
               Icons.search,
               size: 15,
-              color: _focused ? Fn.muted : Fn.faint,
+              color: _focused ? Mf.muted : Mf.faint,
             ),
             const SizedBox(width: 7),
             Expanded(
@@ -192,15 +192,15 @@ class _FnSearchFieldState extends State<FnSearchField> {
                   onChanged: widget.onChanged,
                   onSubmitted: (_) => widget.onSubmit?.call(),
                   textInputAction: TextInputAction.search,
-                  cursorColor: Fn.accent,
+                  cursorColor: Mf.accent,
                   cursorWidth: 1.4,
-                  style: const TextStyle(fontSize: 12.5, color: Fn.text),
+                  style: const TextStyle(fontSize: 12.5, color: Mf.text),
                   decoration: InputDecoration(
                     isCollapsed: true,
                     border: InputBorder.none,
                     hintText: widget.placeholder,
                     hintStyle: const TextStyle(
-                      color: Fn.faint,
+                      color: Mf.faint,
                       fontSize: 12.5,
                     ),
                   ),
@@ -208,7 +208,7 @@ class _FnSearchFieldState extends State<FnSearchField> {
               ),
             ),
             if (widget.value.isNotEmpty && widget.onClear != null)
-              FnIconButton(
+              MfIconButton(
                 icon: Icons.close,
                 size: 22,
                 glyph: 12,
@@ -226,8 +226,8 @@ class _FnSearchFieldState extends State<FnSearchField> {
   }
 }
 
-class FnPrimaryButton extends StatefulWidget {
-  const FnPrimaryButton({
+class MfPrimaryButton extends StatefulWidget {
+  const MfPrimaryButton({
     super.key,
     required this.label,
     required this.onTap,
@@ -241,18 +241,18 @@ class FnPrimaryButton extends StatefulWidget {
   final double height;
 
   @override
-  State<FnPrimaryButton> createState() => _FnPrimaryButtonState();
+  State<MfPrimaryButton> createState() => _FnPrimaryButtonState();
 }
 
-class _FnPrimaryButtonState extends State<FnPrimaryButton> {
+class _FnPrimaryButtonState extends State<MfPrimaryButton> {
   bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
     final active = widget.enabled;
     final color = !active
-        ? Fn.raised
-        : (_hovered ? Fn.accentHover : Fn.accent);
+        ? Mf.raised
+        : (_hovered ? Mf.accentHover : Mf.accent);
     return MouseRegion(
       cursor: active ? SystemMouseCursors.click : SystemMouseCursors.basic,
       onEnter: (_) => setState(() => _hovered = true),
@@ -269,7 +269,7 @@ class _FnPrimaryButtonState extends State<FnPrimaryButton> {
           child: Text(
             widget.label,
             style: TextStyle(
-              color: active ? Fn.cream : Fn.faint,
+              color: active ? Mf.cream : Mf.faint,
               fontSize: 13.5,
               fontWeight: FontWeight.w600,
             ),
@@ -280,8 +280,8 @@ class _FnPrimaryButtonState extends State<FnPrimaryButton> {
   }
 }
 
-class FnIconButton extends StatefulWidget {
-  const FnIconButton({
+class MfIconButton extends StatefulWidget {
+  const MfIconButton({
     super.key,
     required this.icon,
     required this.onTap,
@@ -299,15 +299,15 @@ class FnIconButton extends StatefulWidget {
   final String? tooltip;
 
   @override
-  State<FnIconButton> createState() => _FnIconButtonState();
+  State<MfIconButton> createState() => _FnIconButtonState();
 }
 
-class _FnIconButtonState extends State<FnIconButton> {
+class _FnIconButtonState extends State<MfIconButton> {
   bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
-    final tint = widget.color ?? Fn.textSoft;
+    final tint = widget.color ?? Mf.textSoft;
     final button = MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
@@ -320,12 +320,12 @@ class _FnIconButtonState extends State<FnIconButton> {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: _hovered ? Fn.raised : Colors.transparent,
+            color: _hovered ? Mf.raised : Colors.transparent,
           ),
           child: Icon(
             widget.icon,
             size: widget.glyph,
-            color: _hovered ? Fn.text : tint,
+            color: _hovered ? Mf.text : tint,
           ),
         ),
       ),
@@ -337,15 +337,15 @@ class _FnIconButtonState extends State<FnIconButton> {
 
 /// A hairline slider. Material's Slider is a touch control (4dp groove, 20dp
 /// thumb); on a desktop window that reads as a fat pill.
-class FnScrubber extends StatefulWidget {
-  const FnScrubber({
+class MfScrubber extends StatefulWidget {
+  const MfScrubber({
     super.key,
     required this.fraction,
     this.onScrub,
     this.onCommit,
     this.enabled = true,
-    this.thumbColor = Fn.accent,
-    this.activeColor = Fn.accent,
+    this.thumbColor = Mf.accent,
+    this.activeColor = Mf.accent,
   });
 
   final double fraction;
@@ -356,10 +356,10 @@ class FnScrubber extends StatefulWidget {
   final Color activeColor;
 
   @override
-  State<FnScrubber> createState() => _FnScrubberState();
+  State<MfScrubber> createState() => _FnScrubberState();
 }
 
-class _FnScrubberState extends State<FnScrubber> {
+class _FnScrubberState extends State<MfScrubber> {
   double? _dragFraction;
   bool _hovered = false;
 
@@ -446,7 +446,7 @@ class _ScrubberPainter extends CustomPainter {
     final head = left + width * fraction;
 
     final groove = Paint()
-      ..color = Fn.track
+      ..color = Mf.track
       ..style = PaintingStyle.stroke
       ..strokeWidth = grooveHeight
       ..strokeCap = StrokeCap.round;
@@ -455,7 +455,7 @@ class _ScrubberPainter extends CustomPainter {
 
     if (width > 0 && fraction > 0) {
       final filled = Paint()
-        ..color = enabled ? activeColor : Fn.border
+        ..color = enabled ? activeColor : Mf.border
         ..style = PaintingStyle.stroke
         ..strokeWidth = grooveHeight
         ..strokeCap = StrokeCap.round;

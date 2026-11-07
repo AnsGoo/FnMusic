@@ -1,10 +1,10 @@
 /// Live checks against a running Music Free server.
 ///
-/// Skipped unless `FNMUSIC_TEST_SERVER` is set, so `flutter test` stays offline
+/// Skipped unless `MUSICFLY_TEST_SERVER` is set, so `flutter test` stays offline
 /// by default:
 ///
-///   FNMUSIC_TEST_SERVER=http://127.0.0.1:14533 \
-///   FNMUSIC_TEST_USER=admin FNMUSIC_TEST_PASSWORD=admin flutter test
+///   MUSICFLY_TEST_SERVER=http://127.0.0.1:14533 \
+///   MUSICFLY_TEST_USER=admin MUSICFLY_TEST_PASSWORD=admin flutter test
 library;
 
 import 'dart:io';
@@ -12,11 +12,11 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
-import 'package:fnmusic/data/musicfree_client.dart';
+import 'package:musicfly/data/musicfree_client.dart';
 
-final _server = Platform.environment['FNMUSIC_TEST_SERVER'];
-final _user = Platform.environment['FNMUSIC_TEST_USER'] ?? 'admin';
-final _password = Platform.environment['FNMUSIC_TEST_PASSWORD'] ?? 'admin';
+final _server = Platform.environment['MUSICFLY_TEST_SERVER'];
+final _user = Platform.environment['MUSICFLY_TEST_USER'] ?? 'admin';
+final _password = Platform.environment['MUSICFLY_TEST_PASSWORD'] ?? 'admin';
 
 void main() {
   setUpAll(() {

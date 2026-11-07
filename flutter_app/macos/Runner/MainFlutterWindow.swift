@@ -11,6 +11,7 @@ class MainFlutterWindow: NSWindow {
     self.minSize = NSSize(width: 940, height: 640)
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
+    self.title = "乐记"
     self.center()
 
     RegisterGeneratedPlugins(registry: flutterViewController)

@@ -63,16 +63,16 @@ class Detail {
 }
 
 class AppModel extends ChangeNotifier {
-  AppModel({MusicFreeClient? client, SessionStore? store, FnPlayer? player})
+  AppModel({MusicFreeClient? client, SessionStore? store, MfPlayer? player})
     : client = client ?? MusicFreeClient(),
       _store = store ?? SessionStore(),
-      player = player ?? FnPlayer() {
+      player = player ?? MfPlayer() {
     this.player.onCompleted = _handleCompleted;
     this.player.onFailed = _handleFailure;
   }
 
   final MusicFreeClient client;
-  final FnPlayer player;
+  final MfPlayer player;
   final SessionStore _store;
 
   MusicFreeSession? _session;
@@ -188,6 +188,8 @@ class AppModel extends ChangeNotifier {
 
   // ---- Session ------------------------------------------------------------
 
+
+
   Future<void> restoreSession() async {
     final saved = await _store.load();
     if (saved == null) {
@@ -200,9 +202,6 @@ class AppModel extends ChangeNotifier {
     _booting = false;
     notifyListeners();
     await select(Section.tracks);
-    if (const bool.fromEnvironment('FNMUSIC_AUTOPLAY')) {
-      await playFrom(visibleTracks, 0);
-    }
   }
 
   Future<void> login(String rawUrl, String username, String password) async {
@@ -485,7 +484,6 @@ class AppModel extends ChangeNotifier {
         ),
       );
       if (started) _failedSkips = 0;
-      debugPrint('[autoplay] started=${started} track=${track.title}');
       notifyListeners();
       if (started && _lyricsVisible) unawaited(loadLyrics());
     } on MusicFreeException catch (failure) {
@@ -498,7 +496,6 @@ class AppModel extends ChangeNotifier {
   /// more, but stop after [_maxFailedSkips] so a dead media source does not
   /// ripple through an entire playlist.
   void _handleFailure(String trackId, String reason) {
-    debugPrint('[autoplay] failed track=$trackId reason=$reason');
     if (player.state.value.trackId != trackId) return;
     final hasNext = _queueIndex >= 0 && _queueIndex < _queue.length - 1;
     if (!hasNext || _failedSkips >= _maxFailedSkips) {
