@@ -20,8 +20,43 @@ class PlayerBar extends StatefulWidget {
   State<PlayerBar> createState() => _PlayerBarState();
 }
 
-class _PlayerBarState extends State<PlayerBar> {
+class _PlayerBarState extends State<PlayerBar>
+    with SingleTickerProviderStateMixin {
   double? _scrubSeconds;
+
+  /// Captured in [initState]: `dispose` must not look the provider up again.
+  late final MfPlayer _player;
+
+  /// The cover turns like a record while audio advances, mirroring the web
+  /// transport. It keeps its angle when paused.
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 26),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _player = context.read<AppModel>().player;
+    _player.state.addListener(_syncSpin);
+    _syncSpin();
+  }
+
+  @override
+  void dispose() {
+    _player.state.removeListener(_syncSpin);
+    _spin.dispose();
+    super.dispose();
+  }
+
+  void _syncSpin() {
+    final playing = _player.state.value.playing;
+    if (playing && !_spin.isAnimating) {
+      _spin.repeat();
+    } else if (!playing && _spin.isAnimating) {
+      _spin.stop();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -137,6 +172,12 @@ class _PlayerBarState extends State<PlayerBar> {
                   ),
                 ],
               ),
+              SizedBox(
+                height: 17,
+                child: Center(
+                  child: _InlineLyric(model: model, position: audio.position),
+                ),
+              ),
             ],
           ),
         ),
@@ -225,7 +266,44 @@ class _PlayerBarState extends State<PlayerBar> {
     final coverUrl = model.coverUrl(audio.coverId);
     return Row(
       children: [
-        CoverImage(url: coverUrl, size: coverSize, radius: 6),
+        Tooltip(
+          message: '查看播放详情',
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: model.openNowPlaying,
+              child: SizedBox(
+                width: coverSize,
+                height: coverSize,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    RotationTransition(
+                      turns: _spin,
+                      child: CoverImage(
+                        url: coverUrl,
+                        size: coverSize,
+                        circular: true,
+                        iconSize: coverSize * 0.42,
+                      ),
+                    ),
+                    IgnorePointer(
+                      child: Container(
+                        width: coverSize * 0.14,
+                        height: coverSize * 0.14,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Mf.bg,
+                          border: Border.all(color: Mf.border, width: 1),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
         const SizedBox(width: 11),
         Expanded(
           child: Column(
@@ -276,6 +354,37 @@ class _PlayerBarState extends State<PlayerBar> {
           color: Mf.cream,
         ),
       ),
+    );
+  }
+}
+
+/// One line of the current lyric under the progress bar, matching the web
+/// transport. It reserves its height so the bar never jumps.
+class _InlineLyric extends StatelessWidget {
+  const _InlineLyric({required this.model, required this.position});
+
+  final AppModel model;
+  final Duration position;
+
+  @override
+  Widget build(BuildContext context) {
+    final lyrics = model.lyrics;
+    final index = lyrics != null && lyrics.isTimed
+        ? lyrics.indexAt(position)
+        : -1;
+    final text = index < 0 ? null : lyrics!.lines[index].text;
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 240),
+      child: text == null
+          ? const SizedBox.shrink()
+          : Text(
+              text,
+              key: ValueKey(text),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Mf.muted, fontSize: 11.5),
+            ),
     );
   }
 }

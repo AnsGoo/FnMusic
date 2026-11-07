@@ -105,6 +105,7 @@ class AppModel extends ChangeNotifier {
   Lyrics? _lyrics;
   bool _lyricsLoading = false;
   bool _lyricsVisible = false;
+  bool _nowPlaying = false;
 
   Future<void>? _loadTask;
   bool _completedGuard = false;
@@ -137,6 +138,9 @@ class AppModel extends ChangeNotifier {
   Lyrics? get lyrics => _lyrics;
   bool get lyricsLoading => _lyricsLoading;
   bool get lyricsVisible => _lyricsVisible;
+
+  /// The full-window player opened by tapping the cover in the transport.
+  bool get nowPlayingVisible => _nowPlaying;
 
   bool get signedIn => _session != null;
 
@@ -246,6 +250,7 @@ class AppModel extends ChangeNotifier {
     _section = Section.tracks;
     _lyrics = null;
     _lyricsVisible = false;
+    _nowPlaying = false;
     notifyListeners();
   }
 
@@ -485,7 +490,9 @@ class AppModel extends ChangeNotifier {
       );
       if (started) _failedSkips = 0;
       notifyListeners();
-      if (started && _lyricsVisible) unawaited(loadLyrics());
+      // The transport shows the current lyric line, so every track fetches its
+      // lyrics up front instead of waiting for the pane to be opened.
+      if (started) unawaited(loadLyrics());
     } on MusicFreeException catch (failure) {
       _error = failure.message;
       notifyListeners();
@@ -541,6 +548,23 @@ class AppModel extends ChangeNotifier {
 
   void hideLyrics() {
     _lyricsVisible = false;
+    notifyListeners();
+  }
+
+  // ---- Now playing --------------------------------------------------------
+
+  /// Opens the full-window player. The lyrics pane and the player share the
+  /// same fetch, so opening the player never waits on a second request.
+  void openNowPlaying() {
+    if (_nowPlaying) return;
+    _nowPlaying = true;
+    notifyListeners();
+    if (_lyrics == null) unawaited(loadLyrics());
+  }
+
+  void closeNowPlaying() {
+    if (!_nowPlaying) return;
+    _nowPlaying = false;
     notifyListeners();
   }
 

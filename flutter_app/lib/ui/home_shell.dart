@@ -8,6 +8,7 @@ import '../state/app_model.dart';
 import 'browse_view.dart';
 import 'controls.dart';
 import 'lyrics_view.dart';
+import 'now_playing.dart';
 import 'player_bar.dart';
 import 'theme.dart';
 
@@ -59,7 +60,15 @@ class _HomeShellState extends State<HomeShell> {
     });
   }
 
+  /// The player page owns its own transport, so the shell hides the bottom
+  /// bar and the tab bar while it is open instead of stacking two of them.
+  bool _showingPlayer(AppModel model) =>
+      model.nowPlayingVisible && model.currentTrack != null;
+
   Widget _desktop(AppModel model) {
+    if (_showingPlayer(model)) {
+      return const NowPlayingPage();
+    }
     return Row(
       children: [
         _Sidebar(model: model),
@@ -85,6 +94,9 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Widget _compact(AppModel model) {
+    if (_showingPlayer(model)) {
+      return const NowPlayingPage();
+    }
     return Column(
       children: [
         Expanded(

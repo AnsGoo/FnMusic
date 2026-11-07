@@ -147,12 +147,17 @@ class LyricLine {
 }
 
 class Lyrics {
-  const Lyrics({required this.lines, this.plain});
+  const Lyrics({required this.lines, this.plain, this.raw = ''});
 
   final List<LyricLine> lines;
 
   /// Present when the server stores plain, untimed text.
   final String? plain;
+
+  /// The server's original LRC text. The lyric widget parses this itself so it
+  /// can keep word-level timing (QRC/YRC) and translations the parsed lines
+  /// above deliberately drop.
+  final String raw;
 
   bool get isTimed => lines.isNotEmpty;
 
@@ -202,11 +207,15 @@ Lyrics parseLyrics(String raw) {
 
   if (!hasTimestamps) {
     final plain = raw.trim();
-    return Lyrics(lines: const [], plain: plain.isEmpty ? null : plain);
+    return Lyrics(
+      lines: const [],
+      plain: plain.isEmpty ? null : plain,
+      raw: raw,
+    );
   }
 
   lines.sort((a, b) => a.time.compareTo(b.time));
-  return Lyrics(lines: lines);
+  return Lyrics(lines: lines, raw: raw);
 }
 
 /// `325.4` -> `5:25`, `3700` -> `1:01:40`. Zero and junk read `0:00`, which is

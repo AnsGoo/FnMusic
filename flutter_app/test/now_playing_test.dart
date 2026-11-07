@@ -1,0 +1,150 @@
+/// The cover is the way into the full player, so the transport and the page
+/// must agree on one flag.
+library;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+
+import 'package:musicfly/audio/player.dart';
+import 'package:musicfly/data/models.dart';
+import 'package:musicfly/data/musicfree_client.dart';
+import 'package:musicfly/state/app_model.dart';
+import 'package:musicfly/ui/home_shell.dart';
+import 'package:musicfly/ui/now_playing.dart';
+import 'package:musicfly/ui/player_bar.dart';
+import 'package:musicfly/ui/theme.dart';
+
+class _SilentPlayer extends MfPlayer {
+  final List<String> played = [];
+
+  @override
+  Future<bool> play({
+    required String trackId,
+    required String title,
+    required String subtitle,
+    required String streamUrl,
+    String? coverId,
+    Duration? duration,
+  }) async {
+    played.add(title);
+    state.value = PlaybackState(
+      trackId: trackId,
+      title: title,
+      subtitle: subtitle,
+      coverId: coverId,
+    );
+    return true;
+  }
+}
+
+/// Keeps the widget tests off the network: the model now preloads lyrics for
+/// every track so the transport can show a line.
+class _OfflineClient extends MusicFreeClient {
+  @override
+  Future<Lyrics?> lyrics(String trackId) async => null;
+}
+
+AppModel _model() {
+  final client = _OfflineClient()
+    ..restore(
+      MusicFreeSession(
+        baseUrl: Uri.parse('http://127.0.0.1:1'),
+        token: 'token',
+        username: 'admin',
+        clientSalt: 'salt',
+      ),
+    );
+  return AppModel(client: client, player: _SilentPlayer());
+}
+
+Widget _host(AppModel model, Widget child) => ChangeNotifierProvider<AppModel>.value(
+  value: model,
+  child: MaterialApp(
+    theme: buildMfTheme(),
+    home: Scaffold(body: child),
+  ),
+);
+
+void main() {
+  test('opening the player is a plain state toggle', () {
+    final model = _model();
+    expect(model.nowPlayingVisible, isFalse);
+
+    model.openNowPlaying();
+    expect(model.nowPlayingVisible, isTrue);
+
+    model.closeNowPlaying();
+    expect(model.nowPlayingVisible, isFalse);
+  });
+
+  test('parsed lyrics keep the raw LRC for the lyric renderer', () {
+    final lyrics = parseLyrics('[00:01.00]第一句\n[00:02.50]第二句');
+    expect(lyrics.isTimed, isTrue);
+    expect(lyrics.raw, contains('[00:02.50]第二句'));
+  });
+
+  testWidgets('tapping the cover opens the full player', (tester) async {
+    final model = _model();
+    await model.playFrom([const Track(id: 'a', title: '不该用情')], 0);
+
+    await tester.pumpWidget(_host(model, const PlayerBar(wide: true)));
+    await tester.pump();
+    expect(find.text('不该用情'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('查看播放详情'));
+    await tester.pump();
+    expect(model.nowPlayingVisible, isTrue);
+  });
+
+  testWidgets('the player page shows the song and an empty-lyrics hint', (
+    tester,
+  ) async {
+    final model = _model();
+    await model.playFrom([const Track(id: 'a', title: '不该用情')], 0);
+
+    await tester.pumpWidget(_host(model, const NowPlayingPage()));
+    await tester.pump();
+
+    expect(find.text('不该用情'), findsOneWidget);
+    expect(find.text('这首歌没有内嵌歌词'), findsOneWidget);
+  });
+
+  testWidgets('the shell keeps a single transport while the page is open', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final model = _model();
+    await model.playFrom([const Track(id: 'a', title: '不该用情')], 0);
+
+    await tester.pumpWidget(_host(model, const HomeShell()));
+    await tester.pump();
+    expect(find.byType(PlayerBar), findsOneWidget);
+    expect(find.byType(NowPlayingPage), findsNothing);
+
+    model.openNowPlaying();
+    await tester.pump();
+
+    expect(find.byType(NowPlayingPage), findsOneWidget);
+    expect(find.byType(PlayerBar), findsNothing);
+  });
+
+  testWidgets('the player page stacks instead of overflowing on a phone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final model = _model();
+    await model.playFrom([const Track(id: 'a', title: '不该用情')], 0);
+
+    await tester.pumpWidget(_host(model, const NowPlayingPage()));
+    await tester.pump();
+
+    expect(find.text('不该用情'), findsWidgets);
+  });
+}
