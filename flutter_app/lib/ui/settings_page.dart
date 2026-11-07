@@ -84,9 +84,9 @@ class _SettingsPageState extends State<SettingsPage> {
           '添加备用地址',
           style: TextStyle(color: Mf.text, fontSize: 16),
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        // Scrollable within a screen-height cap so short windows (phone
+        // landscape) never overflow the dialog.
+        content: _ScrollableDialogBody(
           children: [
             const Text(
               '同一服务器的另一个入口，例如外网地址或局域网地址。',
@@ -129,132 +129,136 @@ class _SettingsPageState extends State<SettingsPage> {
     final session = model.session;
     return Scaffold(
       backgroundColor: Mf.bg,
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-            children: [
-              Row(
-                children: [
-                  MfIconButton(
-                    icon: Icons.arrow_back_ios_new_rounded,
-                    size: 32,
-                    glyph: 16,
-                    tooltip: '返回',
-                    onTap: () => Navigator.of(context).maybePop(),
-                  ),
-                  const SizedBox(width: 6),
-                  const Text(
-                    '设置',
-                    style: TextStyle(
-                      color: Mf.text,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              _SectionLabel('账号'),
-              _Card(
-                child: Row(
+      // No AppBar, so keep the back button and title clear of the status bar
+      // (and the list clear of the home indicator) on notched phones.
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+              children: [
+                Row(
                   children: [
-                    AvatarLetter(username: session?.username ?? ''),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            session?.username ?? '',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Mf.text,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          const Text(
-                            '已登录',
-                            style: TextStyle(color: Mf.muted, fontSize: 11.5),
-                          ),
-                        ],
+                    MfIconButton(
+                      icon: Icons.arrow_back_ios_new_rounded,
+                      size: 32,
+                      glyph: 16,
+                      tooltip: '返回',
+                      onTap: () => Navigator.of(context).maybePop(),
+                    ),
+                    const SizedBox(width: 6),
+                    const Text(
+                      '设置',
+                      style: TextStyle(
+                        color: Mf.text,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 10),
-              _DangerButton(label: '退出登录', onTap: _confirmLogout),
-              const SizedBox(height: 22),
-              _SectionLabel('服务器'),
-              _Card(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    for (final address in model.serverAddresses) ...[
-                      if (address != model.serverAddresses.first)
-                        const _RowDivider(),
-                      _AddressRow(
-                        address: address,
-                        active: address == session?.baseUrl,
+                const SizedBox(height: 18),
+                _SectionLabel('账号'),
+                _Card(
+                  child: Row(
+                    children: [
+                      AvatarLetter(username: session?.username ?? ''),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              session?.username ?? '',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Mf.text,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            const Text(
+                              '已登录',
+                              style: TextStyle(color: Mf.muted, fontSize: 11.5),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
-                    const _RowDivider(),
-                    _AddAddressRow(onAdd: _addAddress),
-                    const _RowDivider(),
-                    _InfoRow(
-                      label: '服务端',
-                      value: _serverIdentity(
-                        model.serverInfo,
-                        model.probingServer,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _DangerButton(label: '退出登录', onTap: _confirmLogout),
+                const SizedBox(height: 22),
+                _SectionLabel('服务器'),
+                _Card(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (final address in model.serverAddresses) ...[
+                        if (address != model.serverAddresses.first)
+                          const _RowDivider(),
+                        _AddressRow(
+                          address: address,
+                          active: address == session?.baseUrl,
+                        ),
+                      ],
+                      const _RowDivider(),
+                      _AddAddressRow(onAdd: _addAddress),
+                      const _RowDivider(),
+                      _InfoRow(
+                        label: '服务端',
+                        value: _serverIdentity(
+                          model.serverInfo,
+                          model.probingServer,
+                        ),
                       ),
-                    ),
-                    const _RowDivider(),
-                    _InfoRow(
-                      label: 'Subsonic API',
-                      value: _apiIdentity(model.serverInfo),
-                    ),
-                  ],
+                      const _RowDivider(),
+                      _InfoRow(
+                        label: 'Subsonic API',
+                        value: _apiIdentity(model.serverInfo),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: Text(
-                  '多地址自动切换：每 5 分钟探测一次所有地址并优选延迟最低的'
-                  '（局域网与外网同时可达时自动走局域网）。',
-                  style: const TextStyle(color: Mf.faint, fontSize: 11),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    '多地址自动切换：每 5 分钟探测一次所有地址并优选延迟最低的'
+                    '（局域网与外网同时可达时自动走局域网）。',
+                    style: const TextStyle(color: Mf.faint, fontSize: 11),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              _DangerButton(
-                label: '切换服务器',
-                onTap: _switchServer,
-                destructive: false,
-              ),
-              const SizedBox(height: 22),
-              _SectionLabel('关于'),
-              _Card(
-                child: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _InfoRow(label: '应用', value: '乐记 MusicFly'),
-                    _RowDivider(),
-                    _InfoRow(label: '版本', value: kAppVersion),
-                  ],
+                const SizedBox(height: 10),
+                _DangerButton(
+                  label: '切换服务器',
+                  onTap: _switchServer,
+                  destructive: false,
                 ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                '兼容 Navidrome / Subsonic 生态',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Mf.faint, fontSize: 11.5),
-              ),
-            ],
+                const SizedBox(height: 22),
+                _SectionLabel('关于'),
+                _Card(
+                  child: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _InfoRow(label: '应用', value: '乐记 MusicFly'),
+                      _RowDivider(),
+                      _InfoRow(label: '版本', value: kAppVersion),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  '兼容 Navidrome / Subsonic 生态',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Mf.faint, fontSize: 11.5),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -446,9 +450,9 @@ class _SwitchServerDialogState extends State<_SwitchServerDialog> {
         '切换服务器',
         style: TextStyle(color: Mf.text, fontSize: 16),
       ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      // Scrollable within a screen-height cap so short windows (phone
+      // landscape) never overflow the dialog.
+      content: _ScrollableDialogBody(
         children: [
           const Text(
             '将退出当前登录并连接新服务器。',
@@ -497,6 +501,30 @@ class _SwitchServerDialogState extends State<_SwitchServerDialog> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Dialog body that scrolls under a screen-height cap: on phone landscape
+/// a multi-field form would otherwise overflow the AlertDialog.
+class _ScrollableDialogBody extends StatelessWidget {
+  const _ScrollableDialogBody({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.55,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: children,
+        ),
+      ),
     );
   }
 }

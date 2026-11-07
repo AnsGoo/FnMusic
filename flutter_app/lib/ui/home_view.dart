@@ -51,7 +51,10 @@ class HomeView extends StatelessWidget {
                 Expanded(child: recentCard),
               ],
             )
-          else ...[hotCard, recentCard],
+          else ...[
+            hotCard,
+            recentCard,
+          ],
           _SectionCard(
             title: '专辑',
             subtitle: '浏览全部专辑',
@@ -92,6 +95,26 @@ class HomeView extends StatelessWidget {
 
 /// Entries shown per card: 4 on touch devices, 10 on desktop.
 int get _cardLimit => isMobilePlatform ? 4 : 10;
+
+/// Card width for the sideways cover rows. [rowWidth] is the real constraint
+/// width of the row (measured with a LayoutBuilder, so SafeArea, drawer and
+/// desktop rail are all accounted for automatically). On touch devices the
+/// visible cards always fill the row exactly: the count is however many fit
+/// at a sensible minimum, and when there are fewer items than that each card
+/// grows to share the space (no dead gap on landscape phones). Desktop keeps
+/// the fixed scrolling row.
+double _rowCardWidth(
+  double rowWidth,
+  int itemCount, {
+  double gap = 14,
+  double desktopWidth = 128,
+}) {
+  if (!isMobilePlatform) return desktopWidth;
+  const minCard = 88.0;
+  final maxFit = ((rowWidth + gap) / (minCard + gap)).floor();
+  final n = itemCount < maxFit ? itemCount : maxFit;
+  return ((rowWidth - gap * (n - 1)) / n).clamp(minCard, 200.0);
+}
 
 // ---- Search -----------------------------------------------------------------
 
@@ -240,10 +263,7 @@ class _SectionCard extends StatelessWidget {
             const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  '查看全部',
-                  style: TextStyle(color: Mf.muted, fontSize: 12),
-                ),
+                Text('查看全部', style: TextStyle(color: Mf.muted, fontSize: 12)),
                 SizedBox(width: 2),
                 Icon(Icons.chevron_right_rounded, size: 17, color: Mf.muted),
               ],
@@ -317,28 +337,35 @@ class _TrackCardRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final audio = model.player.state.value;
-    return SizedBox(
-      height: 176,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: tracks.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 14),
-        itemBuilder: (context, index) {
-          final track = tracks[index];
-          final active = audio.trackId == track.id;
-          return _AlbumCard(
-            title: track.title,
-            subtitle: track.artistLine,
-            coverUrl: model.coverUrl(
-              track.coverId ?? track.album?.id,
-              size: 320,
-            ),
-            width: 128,
-            highlight: active,
-            onTap: () => model.playFrom(tracks, index),
-          );
-        },
-      ),
+    // Cover cards are square plus a caption block, so the row grows with the
+    // card width (which itself fills the row on touch devices).
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cardWidth = _rowCardWidth(constraints.maxWidth, tracks.length);
+        return SizedBox(
+          height: cardWidth + 48,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: tracks.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 14),
+            itemBuilder: (context, index) {
+              final track = tracks[index];
+              final active = audio.trackId == track.id;
+              return _AlbumCard(
+                title: track.title,
+                subtitle: track.artistLine,
+                coverUrl: model.coverUrl(
+                  track.coverId ?? track.album?.id,
+                  size: 320,
+                ),
+                width: cardWidth,
+                highlight: active,
+                onTap: () => model.playFrom(tracks, index),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }
@@ -357,23 +384,28 @@ class _AlbumRow extends StatelessWidget {
     if (shown.isEmpty) {
       return const _CardEmpty('服务端还没有专辑');
     }
-    return SizedBox(
-      height: 176,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: shown.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 14),
-        itemBuilder: (context, index) {
-          final album = shown[index];
-          return _AlbumCard(
-            title: album.name,
-            subtitle: album.artistLine,
-            coverUrl: model.coverUrl(album.coverId, size: 320),
-            width: 128,
-            onTap: () => model.openAlbum(album),
-          );
-        },
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cardWidth = _rowCardWidth(constraints.maxWidth, shown.length);
+        return SizedBox(
+          height: cardWidth + 48,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: shown.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 14),
+            itemBuilder: (context, index) {
+              final album = shown[index];
+              return _AlbumCard(
+                title: album.name,
+                subtitle: album.artistLine,
+                coverUrl: model.coverUrl(album.coverId, size: 320),
+                width: cardWidth,
+                onTap: () => model.openAlbum(album),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }
@@ -389,23 +421,28 @@ class _PlaylistRow extends StatelessWidget {
     if (shown.isEmpty) {
       return const _CardEmpty('还没有歌单');
     }
-    return SizedBox(
-      height: 176,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: shown.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 14),
-        itemBuilder: (context, index) {
-          final playlist = shown[index];
-          return _AlbumCard(
-            title: playlist.name,
-            subtitle: '${playlist.trackCount ?? 0} 首',
-            coverUrl: model.coverUrl(playlist.coverId, size: 320),
-            width: 128,
-            onTap: () => model.openPlaylist(playlist),
-          );
-        },
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cardWidth = _rowCardWidth(constraints.maxWidth, shown.length);
+        return SizedBox(
+          height: cardWidth + 48,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: shown.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 14),
+            itemBuilder: (context, index) {
+              final playlist = shown[index];
+              return _AlbumCard(
+                title: playlist.name,
+                subtitle: '${playlist.trackCount ?? 0} 首',
+                coverUrl: model.coverUrl(playlist.coverId, size: 320),
+                width: cardWidth,
+                onTap: () => model.openPlaylist(playlist),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }
@@ -422,22 +459,34 @@ class _ArtistRow extends StatelessWidget {
     if (shown.isEmpty) {
       return const _CardEmpty('曲库扫描完成后这里会按艺术家归类');
     }
-    return SizedBox(
-      height: 128,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: shown.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 18),
-        itemBuilder: (context, index) {
-          final artist = shown[index];
-          return _ArtistCard(
-            name: artist.name,
-            subtitle: artist.trackCount > 0 ? '${artist.trackCount} 首' : '',
-            coverUrl: model.coverUrl(artist.coverId, size: 320),
-            onTap: () => model.openArtist(artist),
-          );
-        },
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cardWidth = _rowCardWidth(
+          constraints.maxWidth,
+          shown.length,
+          gap: 18,
+          desktopWidth: 92,
+        );
+        // Circular avatar (width - 8) plus the name/subtitle block.
+        return SizedBox(
+          height: cardWidth + 36,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: shown.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 18),
+            itemBuilder: (context, index) {
+              final artist = shown[index];
+              return _ArtistCard(
+                name: artist.name,
+                subtitle: artist.trackCount > 0 ? '${artist.trackCount} 首' : '',
+                coverUrl: model.coverUrl(artist.coverId, size: 320),
+                width: cardWidth,
+                onTap: () => model.openArtist(artist),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }
@@ -454,7 +503,10 @@ class _CardEmpty extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 26),
       child: Center(
-        child: Text(text, style: const TextStyle(color: Mf.faint, fontSize: 12.5)),
+        child: Text(
+          text,
+          style: const TextStyle(color: Mf.faint, fontSize: 12.5),
+        ),
       ),
     );
   }
@@ -525,10 +577,9 @@ class _AlbumCardState extends State<_AlbumCard> {
                             child: Icon(
                               Icons.play_circle_fill,
                               size: 34,
-                              color:
-                                  widget.highlight
-                                      ? Mf.accentHover
-                                      : Mf.cream,
+                              color: widget.highlight
+                                  ? Mf.accentHover
+                                  : Mf.cream,
                             ),
                           ),
                         ),
@@ -556,7 +607,11 @@ class _AlbumCardState extends State<_AlbumCard> {
                 widget.subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Mf.faint, fontSize: 11, height: 1.2),
+                style: const TextStyle(
+                  color: Mf.faint,
+                  fontSize: 11,
+                  height: 1.2,
+                ),
               ),
             ],
           ),
@@ -572,12 +627,14 @@ class _ArtistCard extends StatefulWidget {
     required this.subtitle,
     required this.coverUrl,
     required this.onTap,
+    this.width = 92,
   });
 
   final String name;
   final String subtitle;
   final String? coverUrl;
   final VoidCallback onTap;
+  final double width;
 
   @override
   State<_ArtistCard> createState() => _ArtistCardState();
@@ -595,13 +652,13 @@ class _ArtistCardState extends State<_ArtistCard> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: SizedBox(
-          width: 92,
+          width: widget.width,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               CoverImage(
                 url: widget.coverUrl,
-                size: 84,
+                size: widget.width - 8,
                 circular: true,
                 iconSize: 30,
               ),

@@ -77,7 +77,11 @@ class _DetailViewState extends State<DetailView> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     SectionLabel(
-                      detail.isArtist ? '艺术家' : detail.isAlbum ? '专辑' : '歌单',
+                      detail.isArtist
+                          ? '艺术家'
+                          : detail.isAlbum
+                          ? '专辑'
+                          : '歌单',
                     ),
                     const SizedBox(height: 6),
                     Text(
@@ -92,16 +96,23 @@ class _DetailViewState extends State<DetailView> {
                         height: 1.2,
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      detail.subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Mf.muted, fontSize: 12.5),
-                    ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
+                    // Subtitle and the play-all action share one row so the
+                    // header never grows past the cover's height.
                     Row(
                       children: [
+                        Expanded(
+                          child: Text(
+                            detail.subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Mf.muted,
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
                         if (detail.isArtist)
                           MfPrimaryButton(
                             label: '播放全部歌曲',
@@ -122,8 +133,10 @@ class _DetailViewState extends State<DetailView> {
                                 : () => model.playFrom(detail.tracks, 0),
                             enabled: detail.tracks.isNotEmpty,
                           ),
-                        const SizedBox(width: 10),
-                        if (detail.loading) const MfSpinner(size: 16),
+                        if (detail.loading) ...[
+                          const SizedBox(width: 10),
+                          const MfSpinner(size: 16),
+                        ],
                       ],
                     ),
                   ],
@@ -204,8 +217,12 @@ class _DetailViewState extends State<DetailView> {
           child: GridView.builder(
             controller: _scroll,
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 196,
+            gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+              // Narrow (portrait) screens fit three columns by capping the
+              // extent.
+              maxCrossAxisExtent: MediaQuery.sizeOf(context).width < 500
+                  ? 118
+                  : 196,
               mainAxisSpacing: 20,
               crossAxisSpacing: 18,
               childAspectRatio: 0.74,

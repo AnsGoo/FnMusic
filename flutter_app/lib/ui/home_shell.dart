@@ -97,19 +97,24 @@ class _HomeShellState extends State<HomeShell> {
     if (_showingPlayer(model)) {
       return const NowPlayingPage();
     }
-    return Column(
-      children: [
-        Expanded(
-          child: Stack(
-            children: [
-              const Positioned.fill(child: BrowseView()),
-              if (model.lyricsVisible)
-                const Positioned.fill(child: LyricsPanel()),
-            ],
+    // Without an AppBar the Scaffold body reaches under the status bar, so on
+    // notched phones the page title collided with the system clock. SafeArea
+    // also lifts the player bar above the home indicator.
+    return SafeArea(
+      child: Column(
+        children: [
+          Expanded(
+            child: Stack(
+              children: [
+                const Positioned.fill(child: BrowseView()),
+                if (model.lyricsVisible)
+                  const Positioned.fill(child: LyricsPanel()),
+              ],
+            ),
           ),
-        ),
-        PlayerBar(wide: false),
-      ],
+          PlayerBar(wide: false),
+        ],
+      ),
     );
   }
 }
@@ -194,20 +199,31 @@ class _Sidebar extends StatelessWidget {
               ],
             ),
           ),
-          for (final section in Section.values)
-            _NavItem(
-              section: section,
-              selected: model.section == section && model.detail == null,
-              roomy: roomy,
-              onTap: () {
-                // A section picked from the drawer returns to the library,
-                // even if the full-screen player was open.
-                model.closeNowPlaying();
-                model.select(section);
-                onNavigate?.call();
-              },
+          // The section list scrolls when the window is too short (phone
+          // landscape), while the logo and account chip stay pinned.
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final section in Section.values)
+                    _NavItem(
+                      section: section,
+                      selected:
+                          model.section == section && model.detail == null,
+                      roomy: roomy,
+                      onTap: () {
+                        // A section picked from the drawer returns to the
+                        // library, even if the full-screen player was open.
+                        model.closeNowPlaying();
+                        model.select(section);
+                        onNavigate?.call();
+                      },
+                    ),
+                ],
+              ),
             ),
-          const Spacer(),
+          ),
           // The whole account chip opens the settings page (server status,
           // switch server, sign out); the old inline logout icon moved there.
           Tooltip(

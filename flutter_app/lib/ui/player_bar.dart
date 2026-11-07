@@ -294,7 +294,17 @@ class _PlayerBarState extends State<PlayerBar>
           ],
         ),
         const SizedBox(height: 2),
-        _scrubber(model, position, durationSeconds),
+        // A childless CustomPaint collapses to zero width in loose
+        // constraints, so give the scrubber a tight row or it renders as a
+        // lone dot (most visible in landscape, where this bar shows alone).
+        SizedBox(
+          height: 18,
+          child: Row(
+            children: [
+              Expanded(child: _scrubber(model, position, durationSeconds)),
+            ],
+          ),
+        ),
       ],
     );
   }

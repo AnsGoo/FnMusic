@@ -53,7 +53,9 @@ class _BrowseViewState extends State<BrowseView> {
           children: [
             _Toolbar(wide: wide),
             const Divider(height: 1, thickness: 1, color: Mf.border),
-            Expanded(child: _Body(scroll: _scroll, wide: wide)),
+            Expanded(
+              child: _Body(scroll: _scroll, wide: wide),
+            ),
           ],
         );
       },
@@ -189,9 +191,9 @@ class _Body extends StatelessWidget {
     final Widget content = switch (model.section) {
       Section.home => HomeView(),
       Section.tracks || Section.favorites => _trackList(model, wide),
-      Section.albums => _albumGrid(model),
+      Section.albums => _albumGrid(model, wide),
       Section.artists => _artistList(model),
-      Section.playlists => _playlistGrid(model),
+      Section.playlists => _playlistGrid(model, wide),
     };
 
     return content;
@@ -236,7 +238,7 @@ class _Body extends StatelessWidget {
     );
   }
 
-  Widget _albumGrid(AppModel model) {
+  Widget _albumGrid(AppModel model, bool wide) {
     final albums = model.visibleAlbums;
     if (!model.loading && albums.isEmpty) {
       return model.searching
@@ -250,8 +252,9 @@ class _Body extends StatelessWidget {
     return GridView.builder(
       controller: scroll,
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 196,
+      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+        // Narrow (portrait) screens fit three columns by capping the extent.
+        maxCrossAxisExtent: wide ? 196 : 118,
         mainAxisSpacing: 20,
         crossAxisSpacing: 18,
         childAspectRatio: 0.74,
@@ -271,7 +274,7 @@ class _Body extends StatelessWidget {
     );
   }
 
-  Widget _playlistGrid(AppModel model) {
+  Widget _playlistGrid(AppModel model, bool wide) {
     final playlists = model.visiblePlaylists;
     if (!model.loading && playlists.isEmpty) {
       return model.searching
@@ -285,8 +288,9 @@ class _Body extends StatelessWidget {
     return GridView.builder(
       controller: scroll,
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 196,
+      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+        // Narrow (portrait) screens fit three columns by capping the extent.
+        maxCrossAxisExtent: wide ? 196 : 118,
         mainAxisSpacing: 20,
         crossAxisSpacing: 18,
         childAspectRatio: 0.74,
@@ -477,7 +481,9 @@ class _ArtistTileState extends State<_ArtistTile> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: _hovered ? Mf.raised.withValues(alpha: 0.7) : Colors.transparent,
+            color: _hovered
+                ? Mf.raised.withValues(alpha: 0.7)
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Row(
