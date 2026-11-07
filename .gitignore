@@ -24,3 +24,6 @@ __pycache__/
 
 # Packaged artifacts
 dist/
+
+# Agent scratch runs
+.workbuddy/perler-runs/
