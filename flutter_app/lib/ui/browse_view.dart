@@ -75,13 +75,25 @@ class _Toolbar extends StatelessWidget {
     // True on phone/narrow windows, where the shell puts navigation in a
     // drawer instead of a permanent rail.
     final hasDrawer = Scaffold.maybeOf(context)?.hasDrawer ?? false;
-    final showSearch = !hasDetail && model.section != Section.home;
-    final searchField = MfSearchField(
-      value: model.query,
-      onChanged: model.updateQuery,
-      onSubmit: model.submitSearch,
-      onClear: model.clearSearch,
-    );
+    final isHome = model.section == Section.home;
+    // Home search lives in the toolbar on desktop too (same slot as the other
+    // sections); on narrow screens it stays as the in-list row instead.
+    final showSearch = !hasDetail && (!isHome || wide);
+    final searchField = isHome
+        ? MfSearchField(
+            value: model.homeQuery,
+            placeholder: '综合搜索：歌曲、专辑、艺术家',
+            onChanged: model.updateHomeQuery,
+            onSubmit: model.submitHomeSearch,
+            onClear: model.clearHomeSearch,
+          )
+        : MfSearchField(
+            value: model.query,
+            onChanged: model.updateQuery,
+            onSubmit: model.submitSearch,
+            onClear: model.clearSearch,
+          );
+    final searchActive = isHome && model.homeSearching;
     return Padding(
       padding: EdgeInsets.fromLTRB(
         hasDrawer ? 8 : (wide ? 24 : 16),
@@ -142,11 +154,15 @@ class _Toolbar extends StatelessWidget {
                 SizedBox(width: 228, child: searchField),
                 const SizedBox(width: 8),
                 MfIconButton(
-                  icon: Icons.search,
+                  icon: searchActive ? Icons.close_rounded : Icons.search,
                   size: 34,
                   glyph: 17,
-                  tooltip: '搜索',
-                  onTap: model.submitSearch,
+                  tooltip: searchActive ? '返回首页' : '搜索',
+                  onTap: searchActive
+                      ? model.clearHomeSearch
+                      : isHome
+                      ? model.submitHomeSearch
+                      : model.submitSearch,
                 ),
               ],
               if (wide)

@@ -10,6 +10,7 @@ import '../state/app_model.dart';
 import 'controls.dart';
 import 'home_shell.dart';
 import 'theme.dart';
+import 'widgets.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -350,6 +351,21 @@ class _AddressRow extends StatelessWidget {
             statusLabel,
             style: TextStyle(color: statusColor, fontSize: 11.5),
           ),
+          const SizedBox(width: 4),
+          // Manual probe: re-check just this address right away. While it
+          // runs the button becomes a spinner; the result repaints the row.
+          model.isProbingAddress(address)
+              ? const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: MfSpinner(size: 14),
+                )
+              : MfIconButton(
+                  icon: Icons.radar_rounded,
+                  size: 26,
+                  glyph: 15,
+                  tooltip: '立即探测',
+                  onTap: () => model.probeAddressNow(address),
+                ),
           if (model.serverAddresses.length > 1) ...[
             const SizedBox(width: 4),
             MfIconButton(

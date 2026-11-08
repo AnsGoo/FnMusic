@@ -34,53 +34,63 @@ class HomeView extends StatelessWidget {
       subtitle: '最近在听',
       child: _AlbumRow(model: model, albums: model.homeRecentAlbums),
     );
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-      children: [
-        _HomeSearch(model: model),
-        const SizedBox(height: 18),
-        if (model.homeSearching)
-          _SearchResults(model: model, wide: wide)
-        else ...[
-          // On desktop the two headline cards sit side by side, 50/50.
-          if (wide)
-            Row(
-              children: [
-                Expanded(child: hotCard),
-                const SizedBox(width: 16),
-                Expanded(child: recentCard),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Same threshold as the toolbar (browse_view.dart): on wide panes the
+        // home search lives next to the refresh button there, so the in-list
+        // row is dropped to keep a single search box on screen.
+        final paneWide = constraints.maxWidth >= 760;
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+          children: [
+            if (!paneWide) ...[
+              _HomeSearch(model: model),
+              const SizedBox(height: 18),
+            ],
+            if (model.homeSearching)
+              _SearchResults(model: model, wide: wide)
+            else ...[
+              // On desktop the two headline cards sit side by side, 50/50.
+              if (wide)
+                Row(
+                  children: [
+                    Expanded(child: hotCard),
+                    const SizedBox(width: 16),
+                    Expanded(child: recentCard),
+                  ],
+                )
+              else ...[
+                hotCard,
+                recentCard,
               ],
-            )
-          else ...[
-            hotCard,
-            recentCard,
+              _SectionCard(
+                title: '专辑',
+                subtitle: '浏览全部专辑',
+                onTitleTap: () => model.select(Section.albums),
+                child: _AlbumRow(model: model, albums: model.homeAlbums),
+              ),
+              _SectionCard(
+                title: '艺术家',
+                subtitle: '按艺术家浏览',
+                onTitleTap: () => model.select(Section.artists),
+                child: _ArtistRow(model: model),
+              ),
+              _SectionCard(
+                title: '歌单',
+                subtitle: '我的歌单',
+                onTitleTap: () => model.select(Section.playlists),
+                child: _PlaylistRow(model: model),
+              ),
+              _SectionCard(
+                title: '收藏',
+                subtitle: '我喜欢的音乐',
+                onTitleTap: () => model.select(Section.favorites),
+                child: _FavoriteTracks(model: model),
+              ),
+            ],
           ],
-          _SectionCard(
-            title: '专辑',
-            subtitle: '浏览全部专辑',
-            onTitleTap: () => model.select(Section.albums),
-            child: _AlbumRow(model: model, albums: model.homeAlbums),
-          ),
-          _SectionCard(
-            title: '艺术家',
-            subtitle: '按艺术家浏览',
-            onTitleTap: () => model.select(Section.artists),
-            child: _ArtistRow(model: model),
-          ),
-          _SectionCard(
-            title: '歌单',
-            subtitle: '我的歌单',
-            onTitleTap: () => model.select(Section.playlists),
-            child: _PlaylistRow(model: model),
-          ),
-          _SectionCard(
-            title: '收藏',
-            subtitle: '我喜欢的音乐',
-            onTitleTap: () => model.select(Section.favorites),
-            child: _FavoriteTracks(model: model),
-          ),
-        ],
-      ],
+        );
+      },
     );
   }
 

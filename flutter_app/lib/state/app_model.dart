@@ -626,6 +626,36 @@ class AppModel extends ChangeNotifier {
     });
   }
 
+  /// Addresses a manual "probe now" is currently running for (settings page).
+  final Set<Uri> _manualProbing = {};
+
+  bool isProbingAddress(Uri address) => _manualProbing.contains(address);
+
+  /// Immediate single-address probe, triggered from the settings page's
+  /// per-address probe button. Updates that address's status in place (the
+  /// row repaints as soon as the result lands) and re-runs the promotion
+  /// logic so a fresh result can still switch the active address.
+  Future<void> probeAddressNow(Uri address) async {
+    if (!_manualProbing.add(address)) return;
+    notifyListeners();
+    try {
+      final info = await client.pingAddress(address);
+      if (_disposed) return;
+      _addressStatuses[address.toString()] = info;
+      notifyListeners();
+      final session = _session;
+      if (session != null) {
+        _promoteBestAddress(session, session.allAddresses, [
+          for (final a in session.allAddresses)
+            _addressStatuses[a.toString()] ?? const ServerInfo(online: false),
+        ]);
+      }
+    } finally {
+      _manualProbing.remove(address);
+      notifyListeners();
+    }
+  }
+
   void _stopAddressProbe() {
     _addressTimer?.cancel();
     _addressTimer = null;
