@@ -73,7 +73,11 @@ class _SyncedLyricsState extends State<SyncedLyrics> {
     final controller = LyricController(
       initialPosition: widget.playback.value.position,
     );
-    if (widget.lyrics.raw.isNotEmpty) controller.load(widget.lyrics.raw);
+    if (widget.lyrics.isTimed) {
+      controller.load(wordTimedSource(widget.lyrics));
+    } else if (widget.lyrics.raw.isNotEmpty) {
+      controller.load(widget.lyrics.raw);
+    }
     _controller = controller;
   }
 
@@ -93,6 +97,35 @@ class _SyncedLyricsState extends State<SyncedLyrics> {
       onLineTap: (details) => widget.onSeek?.call(details.seekPosition),
     );
   }
+}
+
+/// Wraps plain LRC lines as word-timed (QRC) entries with an *estimated*
+/// singing duration per line.
+///
+/// Without word timings flutter_lyric stretches the highlight sweep across
+/// each line's full slot — from its start to the next line's start
+/// (`LyricLayout.ends` falls back to the next start when the line has no
+/// explicit end). A line sung in 4s followed by 8s of silence keeps its
+/// highlight crawling for 12s, which reads as the lyrics lagging behind the
+/// singing. Estimating ~210ms per character (clamped, never longer than the
+/// gap to the next line) ends the sweep roughly when the line ends, while
+/// line switches stay at the exact LRC timestamps.
+String wordTimedSource(Lyrics lyrics) {
+  final lines = lyrics.lines;
+  final buffer = StringBuffer();
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i];
+    final startMs = line.time.inMilliseconds;
+    final text = line.text.replaceAll('\n', ' ');
+    final nextStart = i + 1 < lines.length
+        ? lines[i + 1].time.inMilliseconds
+        : startMs + 8000;
+    final gap = nextStart - startMs;
+    final estimate = (text.characters.length * 210).clamp(900, 12000);
+    final duration = gap > 0 && gap < estimate ? gap : estimate;
+    buffer.writeln('[$startMs,$duration]$text($startMs,$duration)');
+  }
+  return buffer.toString();
 }
 
 LyricPreset _preset({required bool dense}) {
