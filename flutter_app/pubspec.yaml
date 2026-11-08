@@ -35,6 +35,10 @@ dependencies:
 
   http: ^1.6.0
   crypto: ^3.0.8
+  # FnConnect（飞牛快连）：WS 登录 fnOS 换发中继 entry-token。
+  web_socket_channel: ^3.0.3
+  # RSA(PKCS1 v1.5 加密 AES 密钥) + AES-CBC(登录载荷) 的纯 Dart 实现。
+  pointycastle: ^3.9.1
   shared_preferences: ^2.5.6
   just_audio: ^0.10.6
   # 4.x 依赖 pub.dev 新拆分的 material_ui/cupertino_ui 包，其 switch 不认识

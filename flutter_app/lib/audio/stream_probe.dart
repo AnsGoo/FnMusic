@@ -10,6 +10,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../data/fn_connect.dart';
 import '../data/http_defaults.dart';
 
 /// Human readable problem with [streamUrl], or null when the reply looked
@@ -21,6 +22,13 @@ Future<String?> probeStream(String streamUrl) async {
         .getUrl(Uri.parse(streamUrl))
         .timeout(const Duration(seconds: 8));
     request.headers.set(HttpHeaders.rangeHeader, 'bytes=0-1023');
+    final relayHeaders = fnRelayHeadersFor(streamUrl);
+    if (relayHeaders != null) {
+      request.headers.set(
+        HttpHeaders.cookieHeader,
+        relayHeaders.entries.first.value,
+      );
+    }
     final response = await request.close().timeout(const Duration(seconds: 8));
     final mime = response.headers.contentType?.mimeType ?? '';
     if (mime.isEmpty ||

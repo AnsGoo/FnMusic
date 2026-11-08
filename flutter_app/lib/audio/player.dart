@@ -10,6 +10,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
+import '../data/fn_connect.dart';
 import 'stream_probe.dart';
 
 class PlaybackState {
@@ -231,7 +232,12 @@ class MfPlayer {
     );
     if (transcoded) _startClock();
     try {
-      await _player.setUrl(streamUrl);
+      // Feiniu relay endpoints (Fn Connect) expect their cookie on audio
+      // requests too; other servers never see it.
+      await _player.setUrl(
+        streamUrl,
+        headers: fnRelayHeadersFor(streamUrl),
+      );
       await _player.setVolume(_volume);
       unawaited(_player.play());
       return true;

@@ -1,16 +1,23 @@
 /// The connection gate.
 ///
-/// Only one backend is offered, matching the phone and desktop builds: a Music
-/// Free server. The address is free-form so a LAN box, a tunnel host or
-/// `localhost` all work without a discovery step.
+/// Two tabs:
+/// - **普通登录**: a free-form server address (LAN box, tunnel host or
+///   `localhost`) plus Music Free credentials.
+/// - **飞牛快连 (FNID)**: a two-step flow — first connect to the NAS (fnOS
+///   account, optional 2FA) to mint the relay entry-token and probe every
+///   link for the Music Free backend, then sign in with the Music Free
+///   credentials against the best reachable endpoint.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../data/fn_connect.dart';
 import '../state/app_model.dart';
 import 'controls.dart';
 import 'theme.dart';
+
+enum _LoginMode { direct, fnConnect }
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -20,21 +27,112 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _url = TextEditingController(text: 'http://');
+  // Shared credentials (both tabs sign in to the same Music Free backend).
   final _username = TextEditingController();
   final _password = TextEditingController();
+
+  // Direct tab.
+  final _url = TextEditingController(text: 'http://');
+
+  // Fn Connect tab, step 1 (NAS).
+  final _fnId = TextEditingController();
+  final _nasUsername = TextEditingController();
+  final _nasPassword = TextEditingController();
+  final _nasTwoFa = TextEditingController();
+  final _port = TextEditingController(text: '14533');
+
+  _LoginMode _mode = _LoginMode.direct;
+
+  @override
+  void initState() {
+    super.initState();
+    // Prefill the last successfully resolved FNID, kept across logout.
+    loadLastFnId().then((fnId) {
+      if (fnId != null && mounted && _fnId.text.isEmpty) {
+        setState(() => _fnId.text = fnId);
+      }
+    });
+  }
 
   @override
   void dispose() {
     _url.dispose();
     _username.dispose();
     _password.dispose();
+    _fnId.dispose();
+    _nasUsername.dispose();
+    _nasPassword.dispose();
+    _nasTwoFa.dispose();
+    _port.dispose();
     super.dispose();
   }
 
   void _submit() {
     final model = context.read<AppModel>();
-    model.login(_url.text, _username.text, _password.text);
+    if (_mode == _LoginMode.direct) {
+      model.login(_url.text, _username.text, _password.text);
+    } else if (model.fnPrepared) {
+      model.loginFnPrepared(username: _username.text, password: _password.text);
+    } else {
+      model.prepareFnConnect(
+        fnId: _fnId.text.trim(),
+        nasUsername: _nasUsername.text,
+        nasPassword: _nasPassword.text,
+        nasTwoFaCode: _nasTwoFa.text,
+        backendPort: _port.text,
+      );
+    }
+  }
+
+  /// Segmented tab switcher, styled after the app's compact controls.
+  Widget _tabs() {
+    Widget tab(_LoginMode mode, String label) {
+      final selected = _mode == mode;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () {
+            if (_mode == mode) return;
+            setState(() => _mode = mode);
+            // Errors belong to one flow; switching flows clears them.
+            context.read<AppModel>().consumeError();
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            curve: Curves.easeOutCubic,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected ? Mf.raised : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: selected ? Mf.accent : Colors.transparent),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: selected ? Mf.text : Mf.faint,
+                fontSize: 12.5,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: Mf.surfaceAlt,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          tab(_LoginMode.direct, '普通登录'),
+          tab(_LoginMode.fnConnect, '飞牛快连 (FNID)'),
+        ],
+      ),
+    );
   }
 
   @override
@@ -46,26 +144,10 @@ class _LoginPageState extends State<LoginPage> {
     final landscape = size.width > size.height;
 
     final List<Widget> form = [
-      MfField(
-        label: '服务器地址',
-        value: _url.text,
-        placeholder: 'http://192.168.1.10:4533',
-        onChanged: (value) => _url.text = value,
-      ),
-      const SizedBox(height: 10),
-      MfField(
-        label: '账号',
-        value: _username.text,
-        onChanged: (value) => _username.text = value,
-      ),
-      const SizedBox(height: 10),
-      MfField(
-        label: '密码',
-        value: _password.text,
-        password: true,
-        onChanged: (value) => _password.text = value,
-        onSubmit: _submit,
-      ),
+      _tabs(),
+      const SizedBox(height: 14),
+      if (_mode == _LoginMode.direct) ..._directForm(model),
+      if (_mode == _LoginMode.fnConnect) ..._fnConnectForm(model),
       if (model.error != null) ...[
         const SizedBox(height: 14),
         Container(
@@ -82,7 +164,11 @@ class _LoginPageState extends State<LoginPage> {
       ],
       const SizedBox(height: 22),
       MfPrimaryButton(
-        label: model.connecting ? '连接中…' : '连接',
+        label: model.connecting
+            ? '连接中…'
+            : _mode == _LoginMode.direct || model.fnPrepared
+            ? '登录'
+            : '连接 NAS',
         onTap: model.connecting ? null : _submit,
         enabled: !model.connecting,
       ),
@@ -159,6 +245,159 @@ class _LoginPageState extends State<LoginPage> {
         ),
       ),
     );
+  }
+
+  // ---- 普通登录 -------------------------------------------------------------
+
+  List<Widget> _directForm(AppModel model) {
+    void submit() => model.login(_url.text, _username.text, _password.text);
+    return [
+      MfField(
+        label: '服务器地址',
+        value: _url.text,
+        placeholder: 'http://192.168.1.10:4533',
+        onChanged: (value) => setState(() => _url.text = value),
+        onSubmit: submit,
+      ),
+      const SizedBox(height: 10),
+      _credentialsFields(submit),
+    ];
+  }
+
+  /// The Music Free credentials shared by both tabs.
+  Widget _credentialsFields(VoidCallback submit) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        MfField(
+          label: '账号',
+          value: _username.text,
+          placeholder: 'Music Free 账号',
+          onChanged: (value) => _username.text = value,
+          onSubmit: submit,
+        ),
+        const SizedBox(height: 10),
+        MfField(
+          label: '密码',
+          value: _password.text,
+          password: true,
+          placeholder: 'Music Free 密码',
+          onChanged: (value) => _password.text = value,
+          onSubmit: submit,
+        ),
+      ],
+    );
+  }
+
+  // ---- 飞牛快连 (FNID) -------------------------------------------------------
+
+  List<Widget> _fnConnectForm(AppModel model) {
+    final prepared = model.fnPrepared;
+    if (prepared) {
+      return _fnConnectStep2(model);
+    }
+    return _fnConnectStep1(model);
+  }
+
+  /// Step 1: NAS connection. Shown until the probe finds a reachable backend.
+  List<Widget> _fnConnectStep1(AppModel model) {
+    void submit() => model.prepareFnConnect(
+      fnId: _fnId.text.trim(),
+      nasUsername: _nasUsername.text,
+      nasPassword: _nasPassword.text,
+      nasTwoFaCode: _nasTwoFa.text,
+      backendPort: _port.text,
+    );
+    return [
+      Text(
+        '第一步 · 连接 NAS：登录飞牛获取中继令牌，自动探测内网 / 公网 / 中继链路上的 Music Free 服务',
+        style: const TextStyle(color: Mf.faint, fontSize: 11),
+      ),
+      const SizedBox(height: 10),
+      MfField(
+        label: 'FNID',
+        value: _fnId.text,
+        placeholder: '飞牛快连 ID，如 myid',
+        onChanged: (value) => setState(() => _fnId.text = value),
+        onSubmit: submit,
+      ),
+      const SizedBox(height: 10),
+      MfField(
+        label: '飞牛账号',
+        value: _nasUsername.text,
+        placeholder: 'NAS 本地账号',
+        onChanged: (value) => _nasUsername.text = value,
+        onSubmit: submit,
+      ),
+      const SizedBox(height: 10),
+      MfField(
+        label: '飞牛密码',
+        value: _nasPassword.text,
+        password: true,
+        onChanged: (value) => _nasPassword.text = value,
+        onSubmit: submit,
+      ),
+      const SizedBox(height: 10),
+      MfField(
+        label: '两步验证码（开启 2FA 时填写）',
+        value: _nasTwoFa.text,
+        placeholder: '6 位动态码，选填',
+        onChanged: (value) => _nasTwoFa.text = value,
+        onSubmit: submit,
+      ),
+      const SizedBox(height: 10),
+      MfField(
+        label: '服务端口',
+        value: _port.text,
+        placeholder: '14533',
+        onChanged: (value) => _port.text = value,
+        onSubmit: submit,
+      ),
+    ];
+  }
+
+  /// Step 2: the NAS is connected; ask for the Music Free credentials.
+  List<Widget> _fnConnectStep2(AppModel model) {
+    final probe = model.fnProbe;
+    final links = probe?.reachable.length ?? 0;
+    void submit() =>
+        model.loginFnPrepared(username: _username.text, password: _password.text);
+    return [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Mf.accentWash,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Mf.accent.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.check_circle, size: 16, color: Mf.accent),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '第一步完成 · NAS 已连接，探测到 $links 条可达链路',
+                style: const TextStyle(color: Mf.accentHover, fontSize: 12),
+              ),
+            ),
+            GestureDetector(
+              onTap: model.resetFnConnect,
+              child: const Text(
+                '重新连接',
+                style: TextStyle(color: Mf.accent, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 14),
+      Text(
+        '第二步 · 登录 Music Free',
+        style: const TextStyle(color: Mf.faint, fontSize: 11),
+      ),
+      const SizedBox(height: 10),
+      _credentialsFields(submit),
+    ];
   }
 }
 

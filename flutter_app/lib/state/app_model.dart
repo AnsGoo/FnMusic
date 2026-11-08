@@ -11,6 +11,8 @@ import 'package:dart_cast/dart_cast.dart' hide ServerInfo;
 import 'package:flutter/foundation.dart';
 
 import '../audio/player.dart';
+import '../data/fn_connect.dart';
+import '../data/fnos_client.dart';
 import '../data/models.dart';
 import '../data/musicfree_client.dart';
 import '../data/session_store.dart';
@@ -333,6 +335,12 @@ class AppModel extends ChangeNotifier {
   // ---- Session ------------------------------------------------------------
 
   Future<void> restoreSession() async {
+    // Restore the relay entry-token before probing addresses so a saved
+    // session reached through Fn Connect keeps answering on the subdomain.
+    // Tolerant: the token is an optimization, never a gate for restore.
+    try {
+      await loadLastEntryToken();
+    } catch (_) {}
     final saved = await _store.load();
     if (saved == null) {
       _booting = false;
@@ -431,6 +439,158 @@ class AppModel extends ChangeNotifier {
   ) async {
     await logout();
     await login(rawUrl, username, password);
+  }
+
+  // ---- Fn Connect two-step sign-in ------------------------------------------
+
+  /// Result of the NAS connect step (step 1): the probed endpoints of the
+  /// Music Free backend behind the FNID. Null until [prepareFnConnect]
+  /// succeeds; consumed by [loginFnPrepared].
+  FnProbeResult? _fnProbe;
+
+  bool get fnPrepared => _fnProbe?.best != null;
+  FnProbeResult? get fnProbe => _fnProbe;
+
+  /// Clears the step-1 result so the login page goes back to the NAS form.
+  void resetFnConnect() {
+    if (_fnProbe == null) return;
+    _fnProbe = null;
+    _error = null;
+    notifyListeners();
+  }
+
+  /// Step 1 of the Fn Connect sign-in: resolve the FNID, sign in to the NAS
+  /// over its WebSocket protocol (minting the relay gateway entry-token),
+  /// discover the installed apps' relay subdomains, then probe every link
+  /// (LAN first, relay last) for the Music Free backend on [backendPort].
+  /// The outcome is stored in [fnProbe]; sign-in itself happens in step 2
+  /// ([loginFnPrepared]).
+  ///
+  /// [nasTwoFaCode] is only needed when the NAS account has two-step
+  /// verification enabled; without it the call fails with a message asking
+  /// for the code (fill the field and retry).
+  Future<void> prepareFnConnect({
+    required String fnId,
+    required String nasUsername,
+    required String nasPassword,
+    String? nasTwoFaCode,
+    required String backendPort,
+  }) async {
+    if (_connecting) return;
+    if (nasUsername.trim().isEmpty || nasPassword.isEmpty) {
+      _error = '请填写飞牛账号和密码';
+      notifyListeners();
+      return;
+    }
+    _connecting = true;
+    _error = null;
+    _fnProbe = null;
+    notifyListeners();
+    try {
+      final port = int.tryParse(backendPort.trim()) ?? 14533;
+      final params = await resolveFnId(fnId);
+      // Remember the ID even if the step later fails, so the field prefills.
+      unawaited(saveLastFnId(fnId));
+
+      // Sign in to fnOS over its WebSocket protocol and mint the relay
+      // gateway entry-token — without it every app subdomain answers 403.
+      final relayHost = params.relayDomains.isEmpty
+          ? null
+          : params.relayDomains.first;
+      if (relayHost == null) {
+        throw FnConnectException('FNID 已解析但设备没有中继域名');
+      }
+      final fnos = FnOsClient();
+      try {
+        await fnos.connect('wss://${relayHost.replaceFirst(RegExp(r':\d+$'), '')}/websocket?type=main');
+        try {
+          await fnos.login(nasUsername, nasPassword);
+        } on FnOsTwoFaRequired {
+          if (nasTwoFaCode == null || nasTwoFaCode.trim().isEmpty) {
+            throw FnConnectException('该账号已开启两步验证，请填写 6 位动态验证码后重试');
+          }
+          await fnos.submitTwoFa(nasTwoFaCode);
+        }
+        final entryToken = await fnos.exchangeEntryToken();
+        unawaited(saveLastEntryToken(entryToken));
+        fnRelayEntryToken = entryToken;
+        // App relay subdomains (musicfree.<fnId>.fnos.net) — the broker's
+        // device domain only fronts fnOS's own web UI.
+        final entries = await fnos.listAppEntries();
+        final appDomains = [
+          for (final entry in entries)
+            if (entry.fnDomain.isNotEmpty) '${entry.fnDomain}.${fnId.trim()}.fnos.net',
+        ];
+        final probe = await probeFnCandidates(
+          buildFnCandidates(params, port, extraRelayDomains: appDomains),
+        );
+        if (probe.best == null) {
+          throw MusicFreeException(
+            '未找到可达的链路（内网 / 公网 / 中继均已探测），'
+            '请确认 NAS 在线且 Music Free 服务已在端口 $port 启动',
+          );
+        }
+        _fnProbe = probe;
+      } finally {
+        await fnos.close();
+      }
+    } on FnConnectException catch (failure) {
+      _error = failure.message;
+    } on FnOsException catch (failure) {
+      _error = failure.message;
+    } on MusicFreeException catch (failure) {
+      _error = failure.message;
+    } catch (failure) {
+      _error = '连接失败：$failure';
+    } finally {
+      _connecting = false;
+      notifyListeners();
+    }
+  }
+
+  /// Step 2 of the Fn Connect sign-in: sign in to the Music Free backend
+  /// through the endpoint probed in step 1. Every other reachable endpoint
+  /// is registered as a backup address so the regular failover prober can
+  /// hop between LAN / WAN / relay automatically afterwards.
+  Future<void> loginFnPrepared({
+    required String username,
+    required String password,
+  }) async {
+    final probe = _fnProbe;
+    final best = probe?.best;
+    if (best == null) {
+      _error = '请先完成 NAS 连接';
+      notifyListeners();
+      return;
+    }
+    if (_connecting) return;
+    if (username.trim().isEmpty || password.isEmpty) {
+      _error = '请填写 Music Free 账号和密码';
+      notifyListeners();
+      return;
+    }
+    _connecting = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final active = await client.login(best.toString(), username, password);
+      final others = probe!.reachable.where((address) => address != best).toList();
+      final session = others.isEmpty
+          ? active
+          : active.copyWith(addresses: [active.baseUrl, ...others]);
+      client.restore(session);
+      await _store.save(session);
+      _session = session;
+      _startAddressProbe();
+      await select(Section.home);
+    } on MusicFreeException catch (failure) {
+      _error = failure.message;
+    } catch (failure) {
+      _error = '登录失败：$failure';
+    } finally {
+      _connecting = false;
+      notifyListeners();
+    }
   }
 
   // ---- Multi-address failover ----------------------------------------------

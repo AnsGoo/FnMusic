@@ -4,6 +4,7 @@ library;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../data/fn_connect.dart';
 import '../data/models.dart';
 import 'theme.dart';
 
@@ -61,6 +62,9 @@ class CoverImage extends StatelessWidget {
             imageUrl: url!,
             fit: BoxFit.cover,
             fadeInDuration: const Duration(milliseconds: 140),
+            // Feiniu relay links (Fn Connect) expect their cookie on cover
+            // requests; other servers never see it.
+            httpHeaders: fnRelayHeadersFor(url!),
             placeholder: (_, _) => Container(color: Mf.surfaceAlt),
             errorWidget: (_, _, _) => fallback,
             errorListener: onFailed == null ? null : (_) => onFailed!(),

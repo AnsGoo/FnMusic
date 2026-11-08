@@ -13,6 +13,7 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
+import 'fn_connect.dart';
 import 'http_defaults.dart';
 import 'models.dart';
 
@@ -463,17 +464,23 @@ class MusicFreeClient {
     return _send(
       () => _http.post(
         uri,
-        headers: {..._headers(), 'Content-Type': 'application/json'},
+        headers: {..._headers(base: base), 'Content-Type': 'application/json'},
         body: jsonEncode(payload),
       ),
     );
   }
 
-  Map<String, String> _headers() {
+  Map<String, String> _headers({Uri? base}) {
     final token = _session?.token;
+    final target = base ?? _session?.baseUrl;
     return {
       'Accept': 'application/json',
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      // Feiniu relay links (Fn Connect) expect this cookie on every request,
+      // *including the login call itself* (no session yet) — the gateway
+      // authorizes the app subdomain with the fnOS entry-token, `mode=relay`
+      // alone is not enough. Plain LAN/WAN servers simply ignore it.
+      if (target != null) ...?fnRelayHeadersFor(target.toString()),
     };
   }
 
