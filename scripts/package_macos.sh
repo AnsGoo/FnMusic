@@ -36,6 +36,9 @@ cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 
 echo "==> hdiutil"
+# dist/ 被 gitignore，CI 全新 checkout 时不存在；hdiutil 不会自动建输出目录，
+# 缺了就报 "create failed - No such file or directory"。
+mkdir -p "$(dirname "$OUT")"
 rm -f "$OUT"
 hdiutil create -volname "MusicFly" -srcfolder "$STAGE" -ov \
   -format UDZO -fs HFS+ "$OUT" >/dev/null

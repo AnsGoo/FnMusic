@@ -27,3 +27,7 @@ dist/
 
 # Agent scratch runs
 .workbuddy/perler-runs/
+
+# 鸿蒙构建时由 scripts/build-ohos.sh 生成的插件 overrides（ohos fork 不能
+# 进官方 SDK 的解析，见 pubspec.yaml 鸿蒙适配注释）
+flutter_app/pubspec_overrides.yaml

@@ -96,6 +96,41 @@ if [ "$CHECK_ONLY" = "1" ]; then
   exit 0
 fi
 
+# ---- 2.8 鸿蒙插件 overrides ----
+# ohos fork（sqflite/just_audio/shared_preferences/path_provider）只该在鸿蒙
+# 构建时生效：sqflite fork 还在用官方 SDK 已删除的 v1 embedding
+# （PluginRegistry.Registrar），写进 pubspec.yaml 会把 Android/iOS/macOS
+# 构建全部搞挂。pubspec_overrides.yaml 是 pub 原生机制，自动叠加在
+# pubspec.yaml 之上；此文件不入库，各端 CI 只在跑本脚本时才会生成它。
+cat > pubspec_overrides.yaml <<'EOF'
+# 由 scripts/build-ohos.sh 生成，勿手改。见 pubspec.yaml 中鸿蒙适配注释。
+dependency_overrides:
+  # ohos 版 just_audio 连带的 git 版 audio_session 引用 TargetPlatform.ohos
+  # （仅鸿蒙 fork 有该枚举），官方 SDK 编不过。pub.dev 0.2.4 不做平台枚举
+  # 判断；鸿蒙上仅损失 AVSession 系统媒体面板集成，播放不受影响。
+  audio_session: 0.2.4
+  just_audio:
+    git:
+      url: https://gitcode.com/CPF-Flutter/fluttertpc_just_audio.git
+      path: just_audio
+      ref: 0.10.5-ohos-1.0.0
+  shared_preferences:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/shared_preferences/shared_preferences
+      ref: master
+  path_provider:
+    git:
+      url: https://atomgit.com/openharmony-tpc/flutter_packages.git
+      path: packages/path_provider/path_provider
+      ref: master
+  sqflite:
+    git:
+      url: https://gitcode.com/openharmony-sig/flutter_sqflite.git
+      path: sqflite
+EOF
+note "已生成 pubspec_overrides.yaml（鸿蒙插件 overrides，仅本次构建生效）"
+
 # ---- 3. 出包 ----
 # app.signingConfigs 是否非空。flutter build hap 在 hvigor 打包完之后还会查这一项，
 # 空数组就 throwToolExit —— 此时 HAP 其实已经躺在 outputs 里了（unsigned）。
