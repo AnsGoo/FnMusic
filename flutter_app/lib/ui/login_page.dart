@@ -338,13 +338,16 @@ class _LoginPageState extends State<LoginPage> {
         onSubmit: submit,
       ),
       const SizedBox(height: 10),
-      MfField(
-        label: '两步验证码（开启 2FA 时填写）',
-        value: _nasTwoFa.text,
-        placeholder: '6 位动态码，选填',
-        onChanged: (value) => _nasTwoFa.text = value,
-        onSubmit: submit,
-      ),
+      // The 2FA field stays hidden until the NAS itself reports that the
+      // account has two-step verification enabled.
+      if (model.fnTwoFaRequired)
+        MfField(
+          label: '两步验证码（该账号已开启 2FA）',
+          value: _nasTwoFa.text,
+          placeholder: '6 位动态码',
+          onChanged: (value) => _nasTwoFa.text = value,
+          onSubmit: submit,
+        ),
       const SizedBox(height: 10),
       MfField(
         label: '服务端口',

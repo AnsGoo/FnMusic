@@ -11,6 +11,7 @@ import 'package:dart_cast/dart_cast.dart' hide ServerInfo;
 import 'package:flutter/foundation.dart';
 
 import '../audio/player.dart';
+import '../data/device_did.dart';
 import '../data/fn_connect.dart';
 import '../data/fnos_client.dart';
 import '../data/models.dart';
@@ -448,13 +449,21 @@ class AppModel extends ChangeNotifier {
   /// succeeds; consumed by [loginFnPrepared].
   FnProbeResult? _fnProbe;
 
+  /// Set when the NAS rejected the first sign-in because the account has
+  /// two-step verification enabled — the login page then reveals the 2FA
+  /// code field, which is hidden otherwise.
+  bool _fnTwoFaRequired = false;
+
+  bool get fnTwoFaRequired => _fnTwoFaRequired;
+
   bool get fnPrepared => _fnProbe?.best != null;
   FnProbeResult? get fnProbe => _fnProbe;
 
   /// Clears the step-1 result so the login page goes back to the NAS form.
   void resetFnConnect() {
-    if (_fnProbe == null) return;
+    if (_fnProbe == null && !_fnTwoFaRequired) return;
     _fnProbe = null;
+    _fnTwoFaRequired = false;
     _error = null;
     notifyListeners();
   }
@@ -485,6 +494,7 @@ class AppModel extends ChangeNotifier {
     _connecting = true;
     _error = null;
     _fnProbe = null;
+    _fnTwoFaRequired = false;
     notifyListeners();
     try {
       final port = int.tryParse(backendPort.trim()) ?? 14533;
@@ -500,14 +510,21 @@ class AppModel extends ChangeNotifier {
       if (relayHost == null) {
         throw FnConnectException('FNID 已解析但设备没有中继域名');
       }
-      final fnos = FnOsClient();
+      // A stable device ID makes the NAS remember this app as a trusted
+      // device after one 2FA verify — later sign-ins skip the code prompt.
+      final did = await loadOrCreateFnDid();
+      final fnos = FnOsClient(did: did);
       try {
         await fnos.connect('wss://${relayHost.replaceFirst(RegExp(r':\d+$'), '')}/websocket?type=main');
         try {
           await fnos.login(nasUsername, nasPassword);
         } on FnOsTwoFaRequired {
+          // The server itself says this account needs 2FA — flip the flag so
+          // the login page reveals the code field, then ask the user to retry
+          // with the code filled (a fresh connection is made on the retry).
           if (nasTwoFaCode == null || nasTwoFaCode.trim().isEmpty) {
-            throw FnConnectException('该账号已开启两步验证，请填写 6 位动态验证码后重试');
+            _fnTwoFaRequired = true;
+            throw FnConnectException('该账号已开启两步验证，请输入 6 位动态验证码后重试');
           }
           await fnos.submitTwoFa(nasTwoFaCode);
         }

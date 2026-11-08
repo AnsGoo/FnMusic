@@ -128,6 +128,10 @@ dependency_overrides:
     git:
       url: https://gitcode.com/openharmony-sig/flutter_sqflite.git
       path: sqflite
+  device_info_plus:
+    git:
+      url: https://gitee.com/openharmony-sig/flutter_plus_plugins.git
+      path: packages/device_info_plus/device_info_plus
 EOF
 note "已生成 pubspec_overrides.yaml（鸿蒙插件 overrides，仅本次构建生效）"
 

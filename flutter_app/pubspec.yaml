@@ -40,6 +40,9 @@ dependencies:
   # RSA(PKCS1 v1.5 加密 AES 密钥) + AES-CBC(登录载荷) 的纯 Dart 实现。
   pointycastle: ^3.9.1
   shared_preferences: ^2.5.6
+  # FnConnect 可信设备：用真实硬件标识（ANDROID_ID / IDFV / IOPlatformUUID）
+  # 派生稳定的 did，卸载重装后不变。鸿蒙构建由 build-ohos.sh 覆盖为 ohos 适配版。
+  device_info_plus: ^9.1.2
   just_audio: ^0.10.6
   # 4.x 依赖 pub.dev 新拆分的 material_ui/cupertino_ui 包，其 switch 不认识
   # TargetPlatform.ohos，鸿蒙 fork 编不过且社区尚无 ohos 适配版 → 锁在 3.x。

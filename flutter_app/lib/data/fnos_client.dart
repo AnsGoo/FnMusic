@@ -87,7 +87,11 @@ String _generateReqid() =>
     '${DateTime.now().millisecondsSinceEpoch}${_randomHex(12)}';
 
 /// Mirrors pyfnos `_generate_did`: three base32 chunks joined by dashes.
-String _generateDid() {
+///
+/// Public so callers can generate a stable device ID once and persist it —
+/// the server keys trusted-device status (2FA skip) on this `did`, so it must
+/// stay the same across sign-ins for the trust to stick.
+String generateFnDid() {
   String chunk(String seed, int len) {
     final bytes = Uint8List.fromList(utf8.encode(seed));
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -219,7 +223,14 @@ Uint8List aesCbcBlock(Uint8List key, Uint8List iv, Uint8List input, bool encrypt
 }
 
 class FnOsClient {
-  FnOsClient();
+  /// [did] pins the device ID for this session. Pass the persisted one (see
+  /// `loadOrCreateFnDid` in fn_connect.dart): the server marks the `did`
+  /// trusted after a 2FA verify with `isTrustedDevice: true`, and later
+  /// sign-ins with the same `did` skip the 2FA challenge entirely.
+  FnOsClient({String? did}) : _deviceDid = did;
+
+  /// Stable device ID handed in through the constructor.
+  final String? _deviceDid;
 
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
@@ -286,7 +297,7 @@ class FnOsClient {
       'stay': true,
       'deviceType': 'Browser',
       'deviceName': 'MusicFly',
-      'did': _did = _generateDid(),
+      'did': _did = _deviceDid ?? _did ?? generateFnDid(),
       'req': 'user.login',
       'si': _sessionId,
     });
@@ -321,7 +332,7 @@ class FnOsClient {
       'stay': 1,
       'deviceName': 'MusicFly',
       'deviceType': 'Browser',
-      'did': _did ??= _generateDid(),
+      'did': _did ??= generateFnDid(),
       'req': 'user.2fa.loginVerify',
       'si': _sessionId,
     });
