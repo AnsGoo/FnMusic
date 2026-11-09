@@ -28,7 +28,7 @@
 
 ## 遗留事项
 
-- 应用图标仍是旧图形，需 1024×1024 新图。
+- 鸿蒙图标已换成 Music Free SVG 版（`ohos/*/media/{app_icon,icon}.png`，源 SVG 在 `~/Documents/code/music-free/frontend/public/logo.svg`）；iOS/Android/macOS 平台图标仍是默认图。
 - 仓库目录名仍是 `FnMusic`（用户未要求改）。
 - 本地库有 4 首残缺片段 + 3 个孤儿文件未清理（用户未确认）；8 组重复记录待去重。
 - 「漠河舞厅 (摇滚版)」文件实际是 m4a 但扩展名 .mp3，直传后会播不出，需重命名 + rescan。

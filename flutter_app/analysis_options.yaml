@@ -16,6 +16,9 @@ analyzer:
     - ios/**
     - windows/**
     - macos/**
+    # vendored 的鸿蒙 just_audio 插件（原 gitcode fork），保持上游原样、
+    # 只打最小补丁，不参与本项目的 lint。
+    - vendor/**
 
 linter:
   # The lint rules applied to this project can be customized in the

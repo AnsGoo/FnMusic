@@ -109,11 +109,14 @@ dependency_overrides:
   # （仅鸿蒙 fork 有该枚举），官方 SDK 编不过。pub.dev 0.2.4 不做平台枚举
   # 判断；鸿蒙上仅损失 AVSession 系统媒体面板集成，播放不受影响。
   audio_session: 0.2.4
+  # ohos 版 just_audio 已 vendor 到 vendor/just_audio（原 gitcode
+  # CPF-Flutter/fluttertpc_just_audio 0.10.5-ohos-1.0.0），并打了两个补丁：
+  # 1) AVSession 元数据 401 修复（mediaImage undefined 导致整个 setAVMetadata
+  #    被拒，锁屏面板永远是空的）；
+  # 2) 新增 setMetadata 通道：锁屏面板的歌名/歌手/封面由 App 直接下发
+  #    （插件自带的 AVMetadataExtractor 对网络流抽不到东西）。
   just_audio:
-    git:
-      url: https://gitcode.com/CPF-Flutter/fluttertpc_just_audio.git
-      path: just_audio
-      ref: 0.10.5-ohos-1.0.0
+    path: vendor/just_audio
   shared_preferences:
     git:
       url: https://atomgit.com/openharmony-tpc/flutter_packages.git

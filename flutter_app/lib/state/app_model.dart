@@ -1268,6 +1268,8 @@ class AppModel extends ChangeNotifier {
         trackId: track.id,
         title: track.title,
         subtitle: track.subtitle,
+        // 鸿蒙锁屏播控面板显示的是纯歌手名，subtitle 里的专辑名带过去会乱。
+        artist: track.artistLine,
         streamUrl: url,
         coverId: track.coverId,
         // 锁屏封面要的是完整地址（带 token），不是一个 coverId。

@@ -21,6 +21,7 @@ class _FakePlayer extends MfPlayer {
     required String trackId,
     required String title,
     required String subtitle,
+    String? artist,
     required String streamUrl,
     String? coverId,
     String? coverUrl,

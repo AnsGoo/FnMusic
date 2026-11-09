@@ -12,8 +12,11 @@ const BACKGROUND_AUDIO_CHANNEL = 'com.seasonyuu.musicfly/background_audio';
 /// ["audioPlayback"]，运行时再用 backgroundTaskManager 起一个「长时任务」。
 /// 只声明不申请，切后台后进程照样被冻结；只申请不声明，申请会被静默拒绝。
 ///
-/// 系统媒体面板（锁屏封面、上一首/下一首）不在这里做 —— just_audio 的 ohos
-/// 分支已经在播放器初始化时创建并激活了 AVSession。
+/// 系统媒体面板（锁屏封面、上一首/下一首）由 just_audio 的 ohos 分支在播放器
+/// 初始化时创建并激活 AVSession。它从 AppStorage['context'] 取 UIAbility 上下文：
+/// flutter_ohos 注册插件时塞进去的是 ApplicationContext，而 createAVSession
+/// 要求 UIAbilityContext（错误发生在未 await 的异步函数里，会被静默吞掉，
+/// 表现为锁屏没有媒体面板）。这里在插件注册后用 ability 上下文覆盖回来。
 export default class EntryAbility extends FlutterAbility {
   private channel: MethodChannel | null = null;
   private longTaskRunning: boolean = false;
@@ -21,6 +24,7 @@ export default class EntryAbility extends FlutterAbility {
   configureFlutterEngine(flutterEngine: FlutterEngine) {
     super.configureFlutterEngine(flutterEngine)
     GeneratedPluginRegistrant.registerWith(flutterEngine)
+    AppStorage.setOrCreate('context', this.context);
 
     this.channel = new MethodChannel(flutterEngine.dartExecutor.getBinaryMessenger(), BACKGROUND_AUDIO_CHANNEL);
     this.channel.setMethodCallHandler({

@@ -8,6 +8,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../data/fn_connect.dart';
@@ -69,6 +70,14 @@ class PlaybackState {
 
 class MfPlayer {
   MfPlayer();
+
+  /// 主通道（与鸿蒙 just_audio 插件的 MainMethodCallHandler 对应）。锁屏
+  /// 媒体面板的元数据由 App 直接下发：插件自己的 AVMetadataExtractor 对网络
+  /// 流抽不到信息，而曲名/歌手/封面地址 App 本来就知道。其他平台没有这个
+  /// handler，调用会抛 MissingPluginException，静默忽略即可。
+  static const MethodChannel _justAudioMain = MethodChannel(
+    'com.ryanheise.just_audio.methods',
+  );
 
   /// Created on the first play so widget tests (and the splash screen) never
   /// touch a platform channel.
@@ -224,6 +233,7 @@ class MfPlayer {
     required String title,
     required String subtitle,
     required String streamUrl,
+    String? artist,
     String? coverId,
     String? coverUrl,
     Duration? duration,
@@ -253,6 +263,8 @@ class MfPlayer {
         headers: fnRelayHeadersFor(streamUrl),
       );
       await _player.setVolume(_volume);
+      // 鸿蒙锁屏播控面板的内容：加载成功后把曲目信息推给 AVSession。
+      unawaited(_pushSystemMetadata(title, artist, coverUrl));
       unawaited(_player.play());
       return true;
     } on PlayerInterruptedException {
@@ -266,6 +278,24 @@ class MfPlayer {
       state.value = state.value.copyWith(playing: false, error: reason);
       _reportFailure(trackId, reason);
       return false;
+    }
+  }
+
+  /// 推送锁屏播控面板元数据（仅鸿蒙的 vendored just_audio 插件实现了
+  /// setMetadata；iOS/Android/macOS 未实现该 handler，异常直接忽略）。
+  Future<void> _pushSystemMetadata(
+    String title,
+    String? artist,
+    String? coverUrl,
+  ) async {
+    try {
+      await _justAudioMain.invokeMethod('setMetadata', {
+        'title': title,
+        'artist': artist ?? '',
+        'artUri': coverUrl ?? '',
+      });
+    } catch (_) {
+      // 平台不支持：Android/iOS 走各自的 media_session/notification 通道。
     }
   }
 
