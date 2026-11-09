@@ -245,6 +245,8 @@ export class MediaAvPlayer {
       this.state == AudioPlayerState.PAUSE || this.state == AudioPlayerState.COMPLETED) {
       this.playingState();
     }
+    // seek 完成后同步给锁屏播控面板，否则面板进度停留在旧位置。
+    this.updateIsPlay(this.isPlaying);
     console.info(TAG, `AVPlayer seek succeeded, seek time is ${seekDoneTime}`);
   };
   /**
@@ -340,6 +342,9 @@ export class MediaAvPlayer {
         this.seekIsFirst = -1
         this.isPlaying = true;
         this.state = AudioPlayerState.PLAY;
+        // 首次加载后的自动播放走不到 play() 的 isPrepared 分支，必须在这里
+        // 把「正在播放 + 位置」上报给 AVSession，否则锁屏面板进度条不走。
+        this.updateIsPlay(true);
         this.mediaAvPlayerStateChangeListener?.onEndBuffering();
         break;
       case 'paused':
@@ -529,11 +534,15 @@ export class MediaAvPlayer {
   private dartTitle?: string;
   private dartArtist?: string;
   private dartArtUri?: string;
+  // Dart 侧下发的曲目时长（毫秒）。转码流（chunked）AVPlayer 拿不到 duration，
+  // getDuration() 返回 0，锁屏面板的结束时间就会显示 "--"，所以优先用 Dart 值。
+  private dartDurationMs: number = 0;
 
-  public setSessionMetadata(title?: string, artist?: string, artUri?: string) {
+  public setSessionMetadata(title?: string, artist?: string, artUri?: string, durationMs?: number) {
     this.dartTitle = title;
     this.dartArtist = artist;
     this.dartArtUri = artUri;
+    this.dartDurationMs = durationMs ?? 0;
     if (this.session) {
       this.setAVMetadata();
     }
@@ -553,7 +562,7 @@ export class MediaAvPlayer {
         title: title,
         artist: artist,
         mediaImage: this.dartArtUri ?? this.avMetadata?.albumArtist ?? "",
-        duration: Math.max(0, this.getDuration())
+        duration: this.dartDurationMs > 0 ? this.dartDurationMs : Math.max(0, this.getDuration())
       };
       if (this.session) {
         this.session.setAVMetadata(metadata).then(() => {
@@ -1075,8 +1084,10 @@ export class MediaAvPlayer {
   }
 
   private updateIsPlay(display: boolean) {
+    // speed 是锁屏面板外推进度条的依据：不带 speed 视为倍速 0，进度条永远不动。
     this.setPlayState({
       state: display ? avSession.PlaybackState.PLAYBACK_STATE_PLAY : avSession.PlaybackState.PLAYBACK_STATE_PAUSE,
+      speed: display ? this.speed : 0,
       position: {
         elapsedTime: this.getCurrentTime(),
         updateTime: new Date().getTime()
