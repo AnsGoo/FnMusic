@@ -1,4 +1,5 @@
-# MusicFly 多端打包流水线：Android APK/AAB、macOS DMG、iOS IPA/app、鸿蒙 HAP。
+# MusicFly 多端打包流水线：Android APK/AAB、macOS DMG、Windows 安装包/ZIP、
+# iOS IPA/app、鸿蒙 HAP。
 #
 # 触发方式：
 #   * 发布 GitHub Release（published）—— 构建完成后自动把产物挂到该 Release。
@@ -134,6 +135,94 @@ jobs:
         with:
           name: macos-release
           path: dist/*
+
+  windows:
+    name: Windows setup.exe + ZIP
+    needs: version
+    timeout-minutes: 60
+    # windows-latest 自带 VS 2022（含「使用 C++ 的桌面开发」）、Git Bash 和 7-Zip，
+    # runner 以管理员运行，所以缺 Inno Setup 时下一步能直接 choco 装。
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.8"
+          channel: stable
+          cache: false
+
+      # 打包脚本是 bash 写的（cygpath、mktemp 全用上），必须显式走 Git Bash；
+      # 用默认的 PowerShell 会直接报不是可执行命令。
+      #
+      # musicfly.iss 用到 Inno Setup 6.3+ 的 ArchitecturesInstallIn64BitMode=x64compatible
+      # 和 6.5 的中文语言包，镜像预装的版本可能更老。Inno 自己的 exe 版本资源是
+      # 0.0.0.0（读不到真实版本），所以这里用一次探针编译来实测编译器能力：
+      # 能编过就说明正式打包也编得过，编不过就 choco 升级。
+      - name: Ensure Inno Setup 6 (>= 6.3)
+        shell: bash
+        run: |
+          set -euo pipefail
+          find_iscc() {
+            for p in "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" \
+                     "/c/Program Files/Inno Setup 6/ISCC.exe"; do
+              if [ -f "$p" ]; then echo "$p"; return 0; fi
+            done
+            return 1
+          }
+          supports_project() {
+            local dir probe isl
+            dir="$(mktemp -d)"
+            probe="$dir/probe.iss"
+            isl="$(cygpath -w "$PWD/scripts/inno/ChineseSimplified.isl")"
+            printf '%s\n' \
+              '[Setup]' \
+              'AppName=probe' \
+              'AppVersion=1.0' \
+              'DefaultDirName={tmp}\mfp' \
+              "OutputDir=$(cygpath -w "$dir")" \
+              'ArchitecturesInstallIn64BitMode=x64compatible' \
+              '[Languages]' \
+              "Name: \"zh\"; MessagesFile: \"$isl\"" \
+              > "$probe"
+            MSYS2_ARG_CONV_EXCL='*' "$1" -Q "$(cygpath -w "$probe")" >/dev/null 2>&1
+          }
+
+          iscc="$(find_iscc || true)"
+          if [ -n "$iscc" ] && supports_project "$iscc"; then
+            echo "ISCC=$iscc" >> "$GITHUB_ENV"
+            echo "Inno Setup 可用：$iscc"
+            exit 0
+          fi
+
+          echo "Inno Setup 缺失或版本过老，用 choco 安装最新版"
+          choco upgrade innosetup --no-progress -y || choco install innosetup --no-progress -y
+          iscc="$(find_iscc || true)"
+          if [ -z "$iscc" ]; then
+            echo "::error::装完仍找不到 ISCC.exe"
+            exit 1
+          fi
+          if ! supports_project "$iscc"; then
+            echo "::error::升级后的 ISCC 仍编不过 x64compatible + 中文语言包：$iscc"
+            exit 1
+          fi
+          echo "ISCC=$iscc" >> "$GITHUB_ENV"
+
+      - name: Build setup.exe and ZIP
+        working-directory: flutter_app
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          # 不指定 FLUTTER：脚本会先试 D:\flutter（runner 上不存在），
+          # 再回落到 PATH 里 flutter-action 装的那份。
+        run: ../scripts/package_windows.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: dist/*
+          # 只是中转，最终由 publish job 挂到 Release。
+          retention-days: 7
 
   ios:
     name: iOS app / IPA
@@ -411,7 +500,7 @@ jobs:
       always() && !cancelled() &&
       needs.version.result == 'success' &&
       (github.event_name == 'release' || inputs.tag != '' || startsWith(github.ref, 'refs/tags/'))
-    needs: [version, android, macos, ios, harmony]
+    needs: [version, android, macos, windows, ios, harmony]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

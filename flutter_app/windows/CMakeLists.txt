@@ -10,6 +10,13 @@ set(BINARY_NAME "musicfly")
 # versions of CMake.
 cmake_policy(VERSION 3.14...3.25)
 
+# just_audio_windows 的源码是 UTF-8 无 BOM，中文 Windows（代码页 936）下 MSVC
+# 按 GBK 读取触发 C4819，插件模板的 /WX 又把它升级成错误 → 全局 /utf-8 修复。
+add_compile_options(/utf-8)
+# 新版 MSVC 把 <experimental/coroutine> 标记为废弃错误（STL1011），
+# just_audio_windows 还在用它，先全局压制。
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # Define build configuration option.
 get_property(IS_MULTICONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 if(IS_MULTICONFIG)

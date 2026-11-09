@@ -51,6 +51,21 @@ flutter test test/live_backend_test.dart
 
 生成 `dist/MusicFly-<version>-macos.dmg`。应用为 ad-hoc 签名，拷贝到其他机器后首次打开需右键 → 打开。
 
+## 打包 Windows
+
+```sh
+./scripts/package_windows.sh
+```
+
+生成两个产物：
+
+- `dist/MusicFly-<version>-windows-x64-setup.exe` —— 安装包，双击安装（装到当前用户目录，不需要管理员权限），带开始菜单项、可选桌面快捷方式和卸载程序，界面中英文可选。
+- `dist/MusicFly-<version>-windows-x64.zip` —— 免安装版，解压后运行 `MusicFly/musicfly.exe`。
+
+版本号默认取自 `pubspec.yaml`，可用 `VERSION=x.y.z` 覆盖；`NO_ZIP=1` 只出安装包，`NO_INSTALLER=1` 只出 zip。需要在装有 Visual Studio（含「使用 C++ 的桌面开发」工作负载）和 [Inno Setup 6](https://jrsoftware.org/isdl.php) 第 6.3 版以上（`winget install JRSoftware.InnoSetup`）的机器上构建，安装包定义在 `scripts/musicfly.iss`。
+
+Release 流水线（`.github/workflows/release.yml`）的 `windows` job 会在 Windows runner 上跑同一个脚本，推送 `v*` 标签或发布 Release 后，这两个文件会作为资产挂到对应 Release。
+
 ## 授权
 
 MusicFly 原创代码和文档采用 [Apache License 2.0](LICENSE)，适用范围见[授权范围说明](LICENSE-SCOPE.md)。
