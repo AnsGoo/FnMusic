@@ -345,10 +345,12 @@ class AppModel extends ChangeNotifier {
 
   Future<void> restoreSession() async {
     // Restore the relay entry-token before probing addresses so a saved
-    // session reached through Fn Connect keeps answering on the subdomain.
-    // Tolerant: the token is an optimization, never a gate for restore.
+    // session reached through Fn Connect keeps answering on the subdomain,
+    // and the fnOS session token for unified-gateway (`/app/<name>`) links.
+    // Tolerant: the tokens are optimizations, never a gate for restore.
     try {
       await loadLastEntryToken();
+      await loadLastFnosToken();
     } catch (_) {}
     final saved = await _store.load();
     if (saved == null) {
@@ -464,22 +466,39 @@ class AppModel extends ChangeNotifier {
 
   bool get fnTwoFaRequired => _fnTwoFaRequired;
 
+  /// True when direct links (LAN / public IPs) are unreachable and the FNID
+  /// flow needs an fnOS sign-in before gateway / relay links can be probed.
+  bool _fnNasRequired = false;
+  bool get fnNasRequired => _fnNasRequired;
+
+  /// True when the current probe result was reached through an fnOS sign-in
+  /// (gateway / relay links); false for pure direct links.
+  bool _fnViaNas = false;
+  bool get fnViaNas => _fnViaNas;
+
   bool get fnPrepared => _fnProbe?.best != null;
   FnProbeResult? get fnProbe => _fnProbe;
 
   /// Clears the step-1 result so the login page goes back to the NAS form.
   void resetFnConnect() {
-    if (_fnProbe == null && !_fnTwoFaRequired) return;
+    if (_fnProbe == null && !_fnTwoFaRequired && !_fnNasRequired) return;
     _fnProbe = null;
     _fnTwoFaRequired = false;
+    _fnNasRequired = false;
+    _fnViaNas = false;
     _error = null;
     notifyListeners();
   }
 
-  /// Step 1 of the Fn Connect sign-in: resolve the FNID, sign in to the NAS
-  /// over its WebSocket protocol (minting the relay gateway entry-token),
-  /// discover the installed apps' relay subdomains, then probe every link
-  /// (LAN first, relay last) for the Music Free backend on [backendPort].
+  /// Step 1 of the Fn Connect sign-in: resolve the FNID and probe for the
+  /// Music Free backend on [backendPort]. Direct links (LAN / public IPs
+  /// straight to the port) are tried first and need no fnOS credentials —
+  /// like the official Feiniu music app, where the app account alone is
+  /// enough. Only when every direct link is unreachable are the fnOS
+  /// gateway / relay subdomains probed, which require an fnOS sign-in
+  /// ([nasUsername]/[nasPassword]); in that case [fnNasRequired] flips true
+  /// so the login page reveals the NAS form.
+  ///
   /// The outcome is stored in [fnProbe]; sign-in itself happens in step 2
   /// ([loginFnPrepared]).
   ///
@@ -488,17 +507,12 @@ class AppModel extends ChangeNotifier {
   /// for the code (fill the field and retry).
   Future<void> prepareFnConnect({
     required String fnId,
-    required String nasUsername,
-    required String nasPassword,
+    String? nasUsername,
+    String? nasPassword,
     String? nasTwoFaCode,
     required String backendPort,
   }) async {
     if (_connecting) return;
-    if (nasUsername.trim().isEmpty || nasPassword.isEmpty) {
-      _error = '请填写飞牛账号和密码';
-      notifyListeners();
-      return;
-    }
     _connecting = true;
     _error = null;
     _fnProbe = null;
@@ -509,6 +523,31 @@ class AppModel extends ChangeNotifier {
       final params = await resolveFnId(fnId);
       // Remember the ID even if the step later fails, so the field prefills.
       unawaited(saveLastFnId(fnId));
+
+      // Direct links first: no fnOS session, no tokens — just the backend
+      // answering on its own port. This covers the common LAN case and any
+      // setup with a public IP / forwarded port.
+      final directProbe = await probeFnCandidates(
+        buildFnCandidates(params, port).where((c) => !c.relay).toList(),
+      );
+      if (directProbe.best != null) {
+        _fnNasRequired = false;
+        _fnViaNas = false;
+        _fnProbe = directProbe;
+        return;
+      }
+
+      // Nothing reachable directly: remote access must ride the fnOS unified
+      // gateway or the relay subdomains, and both require an fnOS session.
+      final username = nasUsername?.trim() ?? '';
+      final password = nasPassword ?? '';
+      if (username.isEmpty || password.isEmpty) {
+        _fnNasRequired = true;
+        notifyListeners();
+        return;
+      }
+      _fnNasRequired = true;
+      _fnViaNas = true;
 
       // Sign in to fnOS over its WebSocket protocol and mint the relay
       // gateway entry-token — without it every app subdomain answers 403.
@@ -525,7 +564,7 @@ class AppModel extends ChangeNotifier {
       try {
         await fnos.connect('wss://${relayHost.replaceFirst(RegExp(r':\d+$'), '')}/websocket?type=main');
         try {
-          await fnos.login(nasUsername, nasPassword);
+          await fnos.login(username, password);
         } on FnOsTwoFaRequired {
           // The server itself says this account needs 2FA — flip the flag so
           // the login page reveals the code field, then ask the user to retry
@@ -535,6 +574,14 @@ class AppModel extends ChangeNotifier {
             throw FnConnectException('该账号已开启两步验证，请输入 6 位动态验证码后重试');
           }
           await fnos.submitTwoFa(nasTwoFaCode);
+        }
+        // The unified gateway (device domain `/app/<name>`) authorizes with
+        // the fnOS session token from the login response; persist it so
+        // gateway links keep working after a restart.
+        final fnosToken = fnos.fnosToken;
+        if (fnosToken != null && fnosToken.isNotEmpty) {
+          fnGatewayToken = fnosToken;
+          unawaited(saveLastFnosToken(fnosToken));
         }
         final entryToken = await fnos.exchangeEntryToken();
         unawaited(saveLastEntryToken(entryToken));
@@ -551,7 +598,7 @@ class AppModel extends ChangeNotifier {
         );
         if (probe.best == null) {
           throw MusicFreeException(
-            '未找到可达的链路（内网 / 公网 / 中继均已探测），'
+            '未找到可达的链路（内网 / 公网 / 网关 / 中继均已探测），'
             '请确认 NAS 在线且 Music Free 服务已在端口 $port 启动',
           );
         }
@@ -584,7 +631,7 @@ class AppModel extends ChangeNotifier {
     final probe = _fnProbe;
     final best = probe?.best;
     if (best == null) {
-      _error = '请先完成 NAS 连接';
+      _error = '请先完成 FNID 连接探测';
       notifyListeners();
       return;
     }

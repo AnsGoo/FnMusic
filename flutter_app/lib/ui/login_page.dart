@@ -3,10 +3,11 @@
 /// Two tabs:
 /// - **普通登录**: a free-form server address (LAN box, tunnel host or
 ///   `localhost`) plus Music Free credentials.
-/// - **飞牛快连 (FNID)**: a two-step flow — first connect to the NAS (fnOS
-///   account, optional 2FA) to mint the relay entry-token and probe every
-///   link for the Music Free backend, then sign in with the Music Free
-///   credentials against the best reachable endpoint.
+/// - **飞牛快连 (FNID)**: enter the FNID and Music Free credentials — direct
+///   links (LAN / public IPs) are probed without any fnOS credentials; only
+///   when none is reachable does the NAS form appear (fnOS account, optional
+///   2FA) to unlock the gateway / relay links. Either way the Music Free
+///   sign-in runs against the best reachable endpoint.
 library;
 
 import 'package:flutter/material.dart';
@@ -299,8 +300,11 @@ class _LoginPageState extends State<LoginPage> {
     return _fnConnectStep1(model);
   }
 
-  /// Step 1: NAS connection. Shown until the probe finds a reachable backend.
+  /// Step 1: FNID connection. Direct links are probed without any fnOS
+  /// credentials; the NAS form only appears when every direct link is
+  /// unreachable (remote access rides the gateway / relay).
   List<Widget> _fnConnectStep1(AppModel model) {
+    final needsNas = model.fnNasRequired || model.fnTwoFaRequired;
     void submit() => model.prepareFnConnect(
       fnId: _fnId.text.trim(),
       nasUsername: _nasUsername.text,
@@ -310,7 +314,9 @@ class _LoginPageState extends State<LoginPage> {
     );
     return [
       Text(
-        '第一步 · 连接 NAS：登录飞牛获取中继令牌，自动探测内网 / 公网 / 中继链路上的 Music Free 服务',
+        needsNas
+            ? '内网 / 公网直连不可达 · 登录飞牛账号后可通过统一网关 / 中继远程访问'
+            : '第一步 · 连接 FNID：优先直连内网 / 公网，无需飞牛账号；直连不可达时才会要求登录',
         style: const TextStyle(color: Mf.faint, fontSize: 11),
       ),
       const SizedBox(height: 10),
@@ -323,39 +329,41 @@ class _LoginPageState extends State<LoginPage> {
       ),
       const SizedBox(height: 10),
       MfField(
-        label: '飞牛账号',
-        value: _nasUsername.text,
-        placeholder: 'NAS 本地账号',
-        onChanged: (value) => _nasUsername.text = value,
-        onSubmit: submit,
-      ),
-      const SizedBox(height: 10),
-      MfField(
-        label: '飞牛密码',
-        value: _nasPassword.text,
-        password: true,
-        onChanged: (value) => _nasPassword.text = value,
-        onSubmit: submit,
-      ),
-      const SizedBox(height: 10),
-      // The 2FA field stays hidden until the NAS itself reports that the
-      // account has two-step verification enabled.
-      if (model.fnTwoFaRequired)
-        MfField(
-          label: '两步验证码（该账号已开启 2FA）',
-          value: _nasTwoFa.text,
-          placeholder: '6 位动态码',
-          onChanged: (value) => _nasTwoFa.text = value,
-          onSubmit: submit,
-        ),
-      const SizedBox(height: 10),
-      MfField(
         label: '服务端口',
         value: _port.text,
         placeholder: '14533',
         onChanged: (value) => _port.text = value,
         onSubmit: submit,
       ),
+      if (needsNas) ...[
+        const SizedBox(height: 10),
+        MfField(
+          label: '飞牛账号',
+          value: _nasUsername.text,
+          placeholder: 'NAS 本地账号',
+          onChanged: (value) => _nasUsername.text = value,
+          onSubmit: submit,
+        ),
+        const SizedBox(height: 10),
+        MfField(
+          label: '飞牛密码',
+          value: _nasPassword.text,
+          password: true,
+          onChanged: (value) => _nasPassword.text = value,
+          onSubmit: submit,
+        ),
+        const SizedBox(height: 10),
+        // The 2FA field stays hidden until the NAS itself reports that the
+        // account has two-step verification enabled.
+        if (model.fnTwoFaRequired)
+          MfField(
+            label: '两步验证码（该账号已开启 2FA）',
+            value: _nasTwoFa.text,
+            placeholder: '6 位动态码',
+            onChanged: (value) => _nasTwoFa.text = value,
+            onSubmit: submit,
+          ),
+      ],
     ];
   }
 
@@ -378,11 +386,12 @@ class _LoginPageState extends State<LoginPage> {
             const Icon(Icons.check_circle, size: 16, color: Mf.accent),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                '第一步完成 · NAS 已连接，探测到 $links 条可达链路',
-                style: const TextStyle(color: Mf.accentHover, fontSize: 12),
+                child: Text(
+                  '第一步完成 · ${model.fnViaNas ? '飞牛账号已连接' : '直连模式'}，'
+                  '探测到 $links 条可达链路',
+                  style: const TextStyle(color: Mf.accentHover, fontSize: 12),
+                ),
               ),
-            ),
             GestureDetector(
               onTap: model.resetFnConnect,
               child: const Text(

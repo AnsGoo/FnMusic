@@ -69,6 +69,10 @@ void main() {
         // public IPv4
         'http://120.239.1.2:14533/',
         'https://120.239.1.2:14533/',
+        // unified gateway: LAN portal ports, then the NAS device domain
+        'https://192.168.124.18:5667/app/musicfree/',
+        'http://192.168.124.18:5666/app/musicfree/',
+        'https://myid.5ddd.com/app/musicfree/',
         // relay: HTTPS on 443, port stripped
         'https://myid.5ddd.com/',
       ]);
@@ -104,7 +108,11 @@ void main() {
         14533,
         extraRelayDomains: ['abc123.myid.5ddd.com'],
       );
+      // The device-domain gateway candidate (device.5ddd.com/app/musicfree/)
+      // precedes the relay subdomains; the broker device domain itself comes
+      // last among the plain relay entries.
       expect(candidates.map((c) => c.address.host).toList(), [
+        'device.5ddd.com',
         'abc123.myid.5ddd.com',
         'device.5ddd.com',
       ]);
@@ -143,6 +151,36 @@ void main() {
       );
       expect(headers, isNotNull);
       expect(headers!['Cookie'], 'mode=relay; entry-token=abc123');
+    });
+
+    test('fnRelayHeadersFor authorizes gateway paths with the fnOS token', () {
+      fnGatewayToken = 'fnos-tok';
+      addTearDown(() => fnGatewayToken = null);
+      final headers = fnRelayHeadersFor(
+        'https://chenghaiwen.fnos.net/app/musicfree/rest/stream?id=1',
+        bearerToken: 'jwt-tok',
+      );
+      expect(headers, isNotNull);
+      // Gateway owns Authorization (trim scheme); the Music Free JWT rides in
+      // the Navidrome-style header instead.
+      expect(headers!['Authorization'], 'trim fnos-tok');
+      expect(headers['X-ND-Authorization'], 'Bearer jwt-tok');
+      expect(headers.containsKey('Cookie'), isFalse);
+      // Without a bearer there is no X-ND header.
+      final noBearer = fnRelayHeadersFor(
+        'https://192.168.124.18:5667/app/musicfree/rest/stream?id=1',
+      );
+      expect(noBearer!['Authorization'], 'trim fnos-tok');
+      expect(noBearer.containsKey('X-ND-Authorization'), isFalse);
+      // Without a gateway token the relay-cookie fallback applies (the IP
+      // host is not a relay host, so nothing is returned).
+      fnGatewayToken = null;
+      expect(
+        fnRelayHeadersFor(
+          'https://192.168.124.18:5667/app/musicfree/rest/stream?id=1',
+        ),
+        isNull,
+      );
     });
   });
 }

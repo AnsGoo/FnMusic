@@ -244,6 +244,13 @@ class FnOsClient {
   String? _accessToken;
   String? _did;
 
+  /// fnOS session token from the `user.login` / 2FA response. The unified
+  /// fnOS gateway (device domain `/app/<name>` paths) authenticates requests
+  /// with `Authorization: trim <fnos-token>` — unlike the relay subdomains,
+  /// which use the minted entry-token cookie.
+  String? _fnosToken;
+  String? get fnosToken => _fnosToken;
+
   static const _connectTimeout = Duration(seconds: 12);
   static const _replyTimeout = Duration(seconds: 10);
 
@@ -350,6 +357,7 @@ class FnOsClient {
     if (response['result'] != 'succ' || secret == null) {
       throw FnOsException('fnOS 登录响应异常');
     }
+    _fnosToken = response['token']?.toString();
     final decrypted = _decryptWithLastKey(secret.toString());
     _secretB64 = base64.encode(decrypted);
   }

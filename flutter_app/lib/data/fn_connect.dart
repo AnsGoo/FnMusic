@@ -56,9 +56,37 @@ set fnRelayEntryToken(String? token) {
   _relayEntryToken = (token == null || token.isEmpty) ? null : token;
 }
 
+/// fnOS session token used by the unified gateway for `/app/<name>` paths
+/// (`Authorization: trim <token>`). Captured from the fnOS WebSocket login
+/// response; also persisted so gateway links keep working after a restart.
+String? _fnGatewayToken;
+
+String? get fnGatewayToken => _fnGatewayToken;
+
+set fnGatewayToken(String? token) {
+  _fnGatewayToken = (token == null || token.isEmpty) ? null : token;
+}
+
 /// Relay-ready headers for [url], or null when the URL is not relayed.
-Map<String, String>? fnRelayHeadersFor(String url) {
-  final host = Uri.tryParse(url)?.host ?? '';
+///
+/// Two kinds of Feiniu links exist:
+/// - relay subdomains (`<app>.<fnid>.fnos.net`): authorized by the
+///   `entry-token` cookie;
+/// - unified-gateway app paths (`https://<nas-domain>/app/<name>/...`):
+///   authorized by the fnOS session token via `Authorization: trim <token>`
+///   (see [fnGatewayToken]). When [bearerToken] is given it rides in
+///   `X-ND-Authorization` (Navidrome-style, supported by the Music Free
+///   backend) because the gateway owns `Authorization`.
+Map<String, String>? fnRelayHeadersFor(String url, {String? bearerToken}) {
+  final uri = Uri.tryParse(url);
+  final host = uri?.host ?? '' ;
+  if (uri != null && uri.path.startsWith('/app/') && _fnGatewayToken != null) {
+    return {
+      'Authorization': 'trim $_fnGatewayToken',
+      if (bearerToken != null && bearerToken.isNotEmpty)
+        'X-ND-Authorization': 'Bearer $bearerToken',
+    };
+  }
   if (!isFnRelayHost(host)) return null;
   final entry = _relayEntryToken;
   return {
@@ -82,14 +110,17 @@ class FnConnectException implements Exception {
 /// Shape: `{"ddns":null,"ipv4":["192.168.1.10"],"publicIpv4":["1.2.3.4"],
 /// "publicIpv6":["2409:..."],"fn":["myid.5ddd.com:443"],
 /// "port":{"httpsPort":5667,"httpPort":5666}}`. The reported ports belong to
-/// the Feiniu music app and are ignored here — the caller supplies the port
-/// the Music Free backend listens on.
+/// the Feiniu web portal and are reused for unified-gateway candidates
+/// (`/app/<name>` paths live on the same web listener); the Music Free
+/// backend port itself is supplied by the caller.
 class FnConnectionParams {
   const FnConnectionParams({
     required this.internalIPv4s,
     required this.publicIPv4s,
     required this.publicIPv6s,
     required this.relayDomains,
+    this.httpsPort,
+    this.httpPort,
   });
 
   final List<String> internalIPv4s;
@@ -100,16 +131,26 @@ class FnConnectionParams {
   /// candidates: our backend's relay domain always serves HTTPS on 443.
   final List<String> relayDomains;
 
+  /// fnOS web portal ports from the broker's `port` map (fnOS gateway
+  /// listeners); null when the broker did not report them.
+  final int? httpsPort;
+  final int? httpPort;
+
   factory FnConnectionParams.fromJson(Map<String, dynamic> json) {
     List<String> strings(String key) =>
         (json[key] as List<dynamic>?)?.whereType<String>().toList() ??
         const <String>[];
+    final ports = json['port'];
+    int? port(String key) =>
+        ports is Map<String, dynamic> ? ports[key] as int? : null;
 
     return FnConnectionParams(
       internalIPv4s: strings('ipv4'),
       publicIPv4s: strings('publicIpv4'),
       publicIPv6s: strings('publicIpv6'),
       relayDomains: strings('fn'),
+      httpsPort: port('httpsPort'),
+      httpPort: port('httpPort'),
     );
   }
 }
@@ -224,19 +265,24 @@ class FnCandidate {
   final bool relay;
 }
 
+/// The app name registered on the fnOS unified gateway (`/app/<name>`).
+const String kFnGatewayApp = 'musicfree';
+
 /// Builds ordered probe candidates for a backend listening on [backendPort].
 ///
 /// Priority mirrors the Feiniu client: LAN IPv4 → public IPv6 → public IPv4 →
-/// relay. IP candidates try HTTP first (self-signed certificates on the NAS
-/// commonly break native TLS), then HTTPS. Relay candidates always serve
-/// HTTPS and are usually entered manually (a Docker app's remote domain) or
-/// taken from the broker's `fn` field — for a custom backend the broker's
-/// device domain routes to Feiniu's own apps, so the probe simply drops it
-/// when it does not answer like Music Free.
+/// LAN gateway → NAS-domain gateway → relay subdomains. IP candidates try HTTP
+/// first (self-signed certificates on the NAS commonly break native TLS), then
+/// HTTPS. Gateway candidates target the fnOS unified gateway
+/// (`/app/[gatewayApp]` on the web portal ports / NAS device domain) and are
+/// authorized with the fnOS session token; relay candidates always serve
+/// HTTPS, are usually entered manually (a Docker app's remote domain) or taken
+/// from the broker's `fn` field, and use the entry-token cookie.
 List<FnCandidate> buildFnCandidates(
   FnConnectionParams params,
   int backendPort, {
   List<String> extraRelayDomains = const [],
+  String gatewayApp = kFnGatewayApp,
 }) {
   final candidates = <FnCandidate>[];
   final seen = <String>{};
@@ -269,8 +315,48 @@ List<FnCandidate> buildFnCandidates(
     addIp(ip, ip);
   }
 
-  // Relay last. The broker's device domain is kept for completeness; probes
-  // reject it unless it actually fronts a Music Free backend.
+  // Unified-gateway candidates. The trailing slash matters: the probe appends
+  // `rest/ping.view` to the base path. LAN gateway first (fast, but the
+  // portal's self-signed certificate may break native TLS), then the NAS
+  // device domain (works from anywhere, session-token authorized).
+  final gatewayPath = '/app/$gatewayApp/';
+  for (final ip in params.internalIPv4s) {
+    final hostPart = ip.contains(':') ? '[$ip]' : ip;
+    addUri(
+      Uri(
+        scheme: 'https',
+        host: ip,
+        port: params.httpsPort ?? 5667,
+        path: gatewayPath,
+      ),
+      'Gateway HTTPS ($hostPart)',
+      relay: true,
+    );
+    addUri(
+      Uri(
+        scheme: 'http',
+        host: ip,
+        port: params.httpPort ?? 5666,
+        path: gatewayPath,
+      ),
+      'Gateway HTTP ($hostPart)',
+      relay: true,
+    );
+  }
+  final deviceDomain = params.relayDomains.isEmpty
+      ? null
+      : params.relayDomains.first.trim().replaceFirst(RegExp(r':\d+$'), '');
+  if (deviceDomain != null && deviceDomain.isNotEmpty) {
+    addUri(
+      Uri(scheme: 'https', host: deviceDomain, port: 443, path: gatewayPath),
+      'Gateway ($deviceDomain)',
+      relay: true,
+    );
+  }
+
+  // Relay subdomains last (per-app remote domains, entry-token cookie). The
+  // broker's device domain is kept for completeness; probes reject it unless
+  // it actually fronts a Music Free backend.
   final relayDomains = [
     ...extraRelayDomains,
     ...params.relayDomains,
@@ -386,5 +472,25 @@ Future<String?> loadLastEntryToken() async {
   final prefs = await SharedPreferences.getInstance();
   final value = prefs.getString(_lastEntryTokenKey);
   fnRelayEntryToken = value;
+  return (value == null || value.isEmpty) ? null : value;
+}
+
+/// Remembers the fnOS session token for unified-gateway links
+/// (`/app/<name>` paths) across restarts; captured on every FnConnect
+/// sign-in (a fresh one is issued on each NAS login).
+const String _lastFnosTokenKey = 'musicfly.fn.fnosToken';
+
+Future<void> saveLastFnosToken(String token) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(_lastFnosTokenKey, token);
+  fnGatewayToken = token;
+}
+
+/// Restores the cached fnOS session token into the module state; call once
+/// at app startup. Returns the restored token (null when there is none).
+Future<String?> loadLastFnosToken() async {
+  final prefs = await SharedPreferences.getInstance();
+  final value = prefs.getString(_lastFnosTokenKey);
+  fnGatewayToken = value;
   return (value == null || value.isEmpty) ? null : value;
 }

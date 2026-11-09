@@ -230,8 +230,10 @@ class MusicFreeClient {
     final uri = _uri(base, 'rest/ping.view', query);
     final watch = Stopwatch()..start();
     try {
+      // Headers must be built for the address being probed: relay and
+      // gateway links need different credentials than the active base.
       final response = await _http
-          .get(uri, headers: _headers())
+          .get(uri, headers: _headers(base: base))
           .timeout(const Duration(seconds: 6));
       watch.stop();
       final online = response.statusCode == 200;
@@ -473,14 +475,24 @@ class MusicFreeClient {
   Map<String, String> _headers({Uri? base}) {
     final token = _session?.token;
     final target = base ?? _session?.baseUrl;
+    final extra = target != null
+        ? fnRelayHeadersFor(target.toString(), bearerToken: token)
+        : null;
+    // On unified-gateway links the fnOS session token owns `Authorization`
+    // (trim scheme); the Music Free JWT then travels in X-ND-Authorization
+    // instead (Navidrome-style, supported by the backend middleware).
+    final viaGateway =
+        extra?['Authorization']?.startsWith('trim ') ?? false;
     return {
       'Accept': 'application/json',
-      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      if (token != null && token.isNotEmpty && !viaGateway)
+        'Authorization': 'Bearer $token',
       // Feiniu relay links (Fn Connect) expect this cookie on every request,
-      // *including the login call itself* (no session yet) — the gateway
-      // authorizes the app subdomain with the fnOS entry-token, `mode=relay`
-      // alone is not enough. Plain LAN/WAN servers simply ignore it.
-      if (target != null) ...?fnRelayHeadersFor(target.toString()),
+      // *including the login call itself* (no session yet) — the relay
+      // gateway authorizes the app subdomain with the fnOS entry-token,
+      // `mode=relay` alone is not enough. Unified-gateway links get their
+      // own headers from fnRelayHeadersFor. Plain LAN/WAN servers ignore it.
+      ...?extra,
     };
   }
 
