@@ -66,12 +66,13 @@ export class MainMethodCallHandler implements MethodCallHandler {
       // 而 AVMetadataExtractor 对网络流基本抽不到东西。转发给当前唯一的
       // 播放器（MusicFly 全程只有一个 AudioPlayer 实例）。
       case 'setMetadata':
-        console.info(TAG, `setMetadata from Dart: title=${call.argument("title")}, artist=${call.argument("artist")}, artUri=${call.argument("artUri")}`);
+        console.info(TAG, `setMetadata from Dart: title=${call.argument("title")}, artist=${call.argument("artist")}, artUri=${call.argument("artUri")}, durationMs=${call.argument("durationMs")}`);
         this.players.forEach(player => {
           player.setSessionMetadata(
             call.argument("title"),
             call.argument("artist"),
             call.argument("artUri"),
+            call.argument("durationMs"),
           );
         });
         result.success(new Map<String, Object>());

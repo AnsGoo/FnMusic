@@ -264,7 +264,9 @@ class MfPlayer {
       );
       await _player.setVolume(_volume);
       // 鸿蒙锁屏播控面板的内容：加载成功后把曲目信息推给 AVSession。
-      unawaited(_pushSystemMetadata(title, artist, coverUrl));
+      // duration 必须带上：转码流（chunked）在系统播放器侧拿不到时长，
+      // 缺了它锁屏面板的开始/结束时间会显示 "--"。
+      unawaited(_pushSystemMetadata(title, artist, coverUrl, duration));
       unawaited(_player.play());
       return true;
     } on PlayerInterruptedException {
