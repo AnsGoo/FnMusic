@@ -16,6 +16,11 @@
 - 沙箱内 `flutter test` 会因 HTTP_PROXY 报 "Invalid WebSocket upgrade request"，必须绕代理跑。
 - Windows 构建依赖 windows/CMakeLists.txt 里的全局 `/utf-8` 和 `_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS`（修 just_audio_windows：中文代码页 C4819→error、MSVC 14.51 的 experimental/coroutine STL1011），删了必挂。
 - Android 构建：device_info_plus 9.1.2 的 compileSdk 写死 33，靠 android/build.gradle.kts 里 subprojects + afterEvaluate 反射抬到 36 才能过 AGP 9 的检查；该块必须排在 `evaluationDependsOn(":app")` 之前。`kotlin.incremental=false` 是为了绕开 Windows 上 Kotlin 增量缓存关不掉的报错。
+- 锁屏/后台播放（三端机制不同，不要混）：
+  - Android/iOS：`audio_service` + AndroidManifest 的 `com.ryanheise.audioservice.AudioService`（foregroundServiceType=mediaPlayback）+ `MediaButtonReceiver` + `FOREGROUND_SERVICE`/`FOREGROUND_SERVICE_MEDIA_PLAYBACK`/`WAKE_LOCK` 权限，缺任一项锁屏就停。代码在 `lib/audio/media_session.dart`，main() 里 `MfMediaSession.start()` 先于 runApp。
+  - `audio_service` 与本项目都有 `PlaybackState` → media_session.dart 里 `import 'player.dart' as mf;` 隔开，别改回去。
+  - 鸿蒙：module.json5 必须同时有 ability 的 `backgroundModes: ["audioPlayback"]` 和 `ohos.permission.KEEP_BACKGROUND_RUNNING`，再由 EntryAbility 通过 channel `com.seasonyuu.musicfly/background_audio` 起 `backgroundTaskManager` 长时任务（Dart 侧 `lib/audio/background_task.dart`，只在真的 playing 后申请，系统会校验 AVSession 状态）。孤立的 backgroundModes 或孤立的 startBackgroundRunning 都无效。
+  - 鸿蒙媒体面板/AVSession 由 just_audio 的 ohos 分支在 ArkTS 侧创建，audio_service 在鸿蒙上没有实现，不要试图在那儿调。
 
 ## 遗留事项
 

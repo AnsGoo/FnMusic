@@ -21,6 +21,11 @@
         "startWindowIcon": "$media:icon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
+        // 灭屏/切后台继续播音频：系统只认可声明了该能力的 Ability。少了它，
+        // 即使运行时申请长时任务也会被静默拒绝，表现为锁屏几秒后没声音。
+        "backgroundModes": [
+          "audioPlayback"
+        ],
         "skills": [
           {
             "entities": [
@@ -35,6 +40,8 @@
     ],
     "requestPermissions": [
       {"name" :  "ohos.permission.INTERNET"},
+      // 后台长时任务（音频播放）所需。system_grant 级，安装即授予，无需弹窗。
+      {"name" :  "ohos.permission.KEEP_BACKGROUND_RUNNING"},
     ]
   }
 }

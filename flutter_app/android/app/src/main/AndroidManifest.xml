@@ -1,5 +1,17 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 后台播放：audio_service 起一个前台服务 + MediaSession，灭屏/切后台后
+         系统才不会把进程当普通缓存进程回收掉（现在锁屏就停的原因）。
+         FOREGROUND_SERVICE_MEDIA_PLAYBACK 是 Android 14（targetSdk 34）起的
+         强制项，缺了会直接抛 ForegroundServiceStartNotAllowedException。 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <!-- Android 13（API 33）起通知要用户授权。前台服务通知本身豁免，但暂停后
+         服务会退出前台、通知变成普通通知 —— 没有这个权限，锁屏和通知栏上的
+         播放控制器会直接消失，暂停了就再也点不回去。运行时请求见 MainActivity。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="@string/app_name"
         android:usesCleartextTraffic="true"
@@ -27,6 +39,26 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- audio_service 的播放服务：锁屏/通知栏的媒体控制由它提供，同时把进程
+             标记为前台服务。foregroundServiceType 与上面的权限一一对应。 -->
+        <service
+            android:name="com.ryanheise.audioservice.AudioService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true"
+            tools:ignore="Instantiatable">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService"/>
+            </intent-filter>
+        </service>
+        <!-- 耳机线控 / 蓝牙按键 -->
+        <receiver
+            android:name="com.ryanheise.audioservice.MediaButtonReceiver"
+            android:exported="true"
+            tools:ignore="Instantiatable">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON"/>
+            </intent-filter>
+        </receiver>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

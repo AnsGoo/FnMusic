@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../data/fn_connect.dart';
+import 'background_task.dart';
 import 'stream_probe.dart';
 
 class PlaybackState {
@@ -19,6 +20,7 @@ class PlaybackState {
     this.title = '',
     this.subtitle = '',
     this.coverId,
+    this.coverUrl,
     this.playing = false,
     this.position = Duration.zero,
     this.duration = Duration.zero,
@@ -29,6 +31,10 @@ class PlaybackState {
   final String title;
   final String subtitle;
   final String? coverId;
+
+  /// 封面绝对地址（Subsonic 的 coverArt 带上鉴权参数）。系统媒体中心靠它显示
+  /// 锁屏封面，取不到时留空即可。
+  final String? coverUrl;
   final bool playing;
   final Duration position;
   final Duration duration;
@@ -41,6 +47,7 @@ class PlaybackState {
     String? title,
     String? subtitle,
     String? coverId,
+    String? coverUrl,
     bool? playing,
     Duration? position,
     Duration? duration,
@@ -51,6 +58,7 @@ class PlaybackState {
     title: title ?? this.title,
     subtitle: subtitle ?? this.subtitle,
     coverId: coverId ?? this.coverId,
+    coverUrl: coverUrl ?? this.coverUrl,
     playing: playing ?? this.playing,
     position: position ?? this.position,
     duration: duration ?? this.duration,
@@ -130,7 +138,11 @@ class MfPlayer {
         final current = state.value;
         final finished =
             playerState.processingState == ProcessingState.completed;
-        state.value = current.copyWith(playing: playerState.playing && !finished);
+        final playing = playerState.playing && !finished;
+        state.value = current.copyWith(playing: playing);
+        // 鸿蒙的长时任务要在真的出声之后才申请：系统会校验 AVSession 是否
+        // 处于播放态，提前申请会被判成「没有在放音频」而拒掉。
+        if (playing) unawaited(BackgroundAudioTask.ensureRunning());
         if (finished) onCompleted?.call();
       }),
     );
@@ -213,6 +225,7 @@ class MfPlayer {
     required String subtitle,
     required String streamUrl,
     String? coverId,
+    String? coverUrl,
     Duration? duration,
     bool transcoded = false,
   }) async {
@@ -227,6 +240,7 @@ class MfPlayer {
       title: title,
       subtitle: subtitle,
       coverId: coverId,
+      coverUrl: coverUrl,
       playing: false,
       duration: duration ?? Duration.zero,
     );
@@ -270,10 +284,22 @@ class MfPlayer {
   void toggle() {
     if (!state.value.hasTrack) return;
     if (_player.playing) {
-      unawaited(_player.pause());
+      unawaited(pause());
     } else {
-      unawaited(_player.play());
+      unawaited(resume());
     }
+  }
+
+  /// Explicit transport hooks for the system media session: the notification's
+  /// play/pause button must not have to guess the current state.
+  Future<void> pause() async {
+    if (!state.value.hasTrack) return;
+    await _engine?.pause();
+  }
+
+  Future<void> resume() async {
+    if (!state.value.hasTrack) return;
+    await _engine?.play();
   }
 
   Future<void> seek(Duration position) async {
@@ -301,6 +327,9 @@ class MfPlayer {
     _stopClock();
     await _engine?.stop();
     state.value = const PlaybackState();
+    // Nothing is loaded any more, so the HarmonyOS long-running task would just
+    // hold the process awake for no reason.
+    unawaited(BackgroundAudioTask.release());
   }
 
   void dispose() {
@@ -311,6 +340,7 @@ class MfPlayer {
     _subs.clear();
     final engine = _engine;
     if (engine != null) unawaited(engine.dispose());
+    unawaited(BackgroundAudioTask.release());
     state.dispose();
   }
 }

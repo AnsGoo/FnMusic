@@ -44,6 +44,15 @@ dependencies:
   # 派生稳定的 did，卸载重装后不变。鸿蒙构建由 build-ohos.sh 覆盖为 ohos 适配版。
   device_info_plus: ^9.1.2
   just_audio: ^0.10.6
+  # 系统媒体中心（通知栏 / 锁屏 / 蓝牙耳机按键）只有一个 Android/iOS 实现：
+  # Android 侧拉起前台服务 + MediaSession，灭屏后播放不再被系统冻结。
+  # 鸿蒙没有对应实现，走 platform channel 起「长时任务」+ just_audio ohos
+  # 分支自带的 AVSession（见 lib/audio/background_task.dart）。
+  audio_service: ^0.18.19
+  # iOS 的锁屏/后台播放前提：AVAudioSession 必须配成 playback，否则切后台就
+  # 静音、锁屏也不出播放控制器；Android 上同时负责音频焦点。它本来是
+  # just_audio 的传递依赖，这里显式声明是因为我们自己要 import 它。
+  audio_session: ^0.2.4
   # 4.x 依赖 pub.dev 新拆分的 material_ui/cupertino_ui 包，其 switch 不认识
   # TargetPlatform.ohos，鸿蒙 fork 编不过且社区尚无 ohos 适配版 → 锁在 3.x。
   cached_network_image: 3.4.1

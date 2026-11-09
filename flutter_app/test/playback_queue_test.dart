@@ -24,6 +24,7 @@ class _FakePlayer extends MfPlayer {
     required String subtitle,
     required String streamUrl,
     String? coverId,
+    String? coverUrl,
     Duration? duration,
     bool transcoded = false,
   }) async {

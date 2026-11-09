@@ -10,6 +10,7 @@ import 'dart:async';
 import 'package:dart_cast/dart_cast.dart' hide ServerInfo;
 import 'package:flutter/foundation.dart';
 
+import '../audio/media_session.dart';
 import '../audio/player.dart';
 import '../data/device_did.dart';
 import '../data/fn_connect.dart';
@@ -100,6 +101,13 @@ class AppModel extends ChangeNotifier {
        _castSessionFactory = castSessionFactory {
     this.player.onCompleted = _handleCompleted;
     this.player.onFailed = _handleFailure;
+    // Lock screen / headset buttons drive the same queue as the in-app
+    // transport, so there is only ever one source of truth for "next".
+    MfMediaSession.instance?.bind(
+      this.player,
+      onNext: next,
+      onPrevious: previous,
+    );
   }
 
   final MusicFreeClient client;
@@ -1236,6 +1244,9 @@ class AppModel extends ChangeNotifier {
   Future<void> _startTrack(Track track) async {
     _completedGuard = false;
     _lyrics = null;
+    // 用户主动开播时顺手要一次通知权限（Android 13+）：没有它，暂停后锁屏
+    // 和通知栏上的播放控制器会消失。放在这里而不是启动时，避免一进 App 就弹窗。
+    unawaited(MfMediaSession.ensureNotificationPermission());
     final session = _castSession;
     if (session != null) {
       await _castToSession(track, session);
@@ -1259,6 +1270,8 @@ class AppModel extends ChangeNotifier {
         subtitle: track.subtitle,
         streamUrl: url,
         coverId: track.coverId,
+        // 锁屏封面要的是完整地址（带 token），不是一个 coverId。
+        coverUrl: client.coverUrl(track.coverId, size: 640),
         duration: Duration(
           milliseconds: (track.durationSeconds * 1000).round(),
         ),
@@ -1572,6 +1585,9 @@ class AppModel extends ChangeNotifier {
     _castStateSub?.cancel();
     _castVolumeSub?.cancel();
     unawaited(_castService?.dispose());
+    // 先解绑再销毁播放器：媒体会话的监听器挂在 player.state 上，那个
+    // ValueNotifier 马上就要被 dispose 了。
+    MfMediaSession.instance?.unbind();
     player.dispose();
     super.dispose();
   }

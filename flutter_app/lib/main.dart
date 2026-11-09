@@ -4,13 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import 'audio/media_session.dart';
+import 'audio/system_audio.dart';
 import 'data/http_defaults.dart';
 import 'state/app_model.dart';
 import 'ui/home_shell.dart';
 import 'ui/login_page.dart';
 import 'ui/theme.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Let the window follow the system auto-rotate toggle. On OpenHarmony the
   // default "unspecified" window orientation does not track rotation on
@@ -19,6 +21,13 @@ void main() {
   // Android/iOS already behave this way by default; desktop ignores it.
   SystemChrome.setPreferredOrientations(DeviceOrientation.values);
   HttpOverrides.global = LocalNetworkDirect();
+  // iOS 必须先把 AVAudioSession 设成 playback，锁屏/切后台才不会被系统静音，
+  // 锁屏上才会出现播放控制器；Android 靠它拿到正确的音频焦点。
+  await configureSystemAudio();
+  // Must happen before the first frame: it registers the Android foreground
+  // service + MediaSession that keeps audio alive once the screen locks.
+  // No-op on desktop and HarmonyOS (which uses its own long-running task).
+  await MfMediaSession.start();
   runApp(const MusicFlyApp());
 }
 
