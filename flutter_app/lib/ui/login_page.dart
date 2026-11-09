@@ -53,6 +53,13 @@ class _LoginPageState extends State<LoginPage> {
         setState(() => _fnId.text = fnId);
       }
     });
+    // Prefill the backend port remembered from the last successful probe
+    // (default 14533; the field stays hidden until a probe fails).
+    loadLastFnPort().then((port) {
+      if (port != null && mounted) {
+        setState(() => _port.text = port);
+      }
+    });
   }
 
   @override
@@ -302,7 +309,9 @@ class _LoginPageState extends State<LoginPage> {
 
   /// Step 1: FNID connection. Direct links are probed without any fnOS
   /// credentials; the NAS form only appears when every direct link is
-  /// unreachable (remote access rides the gateway / relay).
+  /// unreachable (remote access rides the gateway / relay). The port field
+  /// follows the same rule: 14533 is assumed silently and the field is only
+  /// revealed once a probe fails, so a non-default setup can correct it.
   List<Widget> _fnConnectStep1(AppModel model) {
     final needsNas = model.fnNasRequired || model.fnTwoFaRequired;
     void submit() => model.prepareFnConnect(
@@ -327,15 +336,18 @@ class _LoginPageState extends State<LoginPage> {
         onChanged: (value) => setState(() => _fnId.text = value),
         onSubmit: submit,
       ),
-      const SizedBox(height: 10),
-      MfField(
-        label: '服务端口',
-        value: _port.text,
-        placeholder: '14533',
-        onChanged: (value) => _port.text = value,
-        onSubmit: submit,
-      ),
+      // The backend port is only relevant once probing fails (14533 is
+      // assumed by default); revealing it here lets a non-default setup
+      // correct it before retrying the direct probe.
       if (needsNas) ...[
+        const SizedBox(height: 10),
+        MfField(
+          label: '服务端口（默认 14533，若不同请修改）',
+          value: _port.text,
+          placeholder: '14533',
+          onChanged: (value) => _port.text = value,
+          onSubmit: submit,
+        ),
         const SizedBox(height: 10),
         MfField(
           label: '飞牛账号',

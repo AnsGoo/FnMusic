@@ -534,6 +534,7 @@ class AppModel extends ChangeNotifier {
         _fnNasRequired = false;
         _fnViaNas = false;
         _fnProbe = directProbe;
+        unawaited(saveLastFnPort(port));
         return;
       }
 
@@ -603,6 +604,7 @@ class AppModel extends ChangeNotifier {
           );
         }
         _fnProbe = probe;
+        unawaited(saveLastFnPort(port));
       } finally {
         await fnos.close();
       }

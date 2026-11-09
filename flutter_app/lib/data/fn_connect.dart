@@ -455,6 +455,22 @@ Future<void> saveLastFnId(String fnId) async {
   await prefs.setString(_lastFnIdKey, fnId.trim());
 }
 
+/// Remembers the backend port that the last successful Fn Connect probe used,
+/// so a non-default setup does not have to retype it (the field itself stays
+/// hidden until a probe fails; 14533 is the default).
+const String _lastFnPortKey = 'musicfly.fn.port';
+
+Future<String?> loadLastFnPort() async {
+  final prefs = await SharedPreferences.getInstance();
+  final value = prefs.getString(_lastFnPortKey);
+  return (value == null || value.isEmpty) ? null : value;
+}
+
+Future<void> saveLastFnPort(int port) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(_lastFnPortKey, '$port');
+}
+
 /// Remembers the relay entry-token issued for the current fnOS session so
 /// playback/cover requests keep working after the app restarts (a fresh one
 /// is minted on every FnConnect sign-in).
