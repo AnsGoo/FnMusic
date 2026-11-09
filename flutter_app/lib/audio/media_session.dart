@@ -1,13 +1,16 @@
-/// 把本地播放接入系统的媒体中心：Android 的通知栏 / 锁屏 / 蓝牙耳机按键。
+/// 把本地播放接入系统的媒体中心：Android 的通知栏 / 锁屏 / 蓝牙耳机按键；
+/// iOS / macOS 的控制中心「正在播放」与锁屏控件。
 ///
 /// 只负责「上报状态 + 收下发命令」，播放本身仍在 [MfPlayer] 里。没有这层时，
 /// 应用退到后台、屏幕一锁，Android 会把进程当成普通的缓存进程回收掉，音频也就
 /// 停了；[AudioService] 拉起一个 foreground service + MediaSession，系统才认为
 /// 这是一个正在放音乐的进程，同时把锁屏与通知栏的控制权交给它。
 ///
-/// 只有 Android / iOS 有 audio_service 的原生实现。鸿蒙走的是另一条路：系统
-/// 媒体面板由 just_audio 的 ohos 分支创建 AVSession 来提供，灭屏存活靠「长时
-/// 任务」，见 [background_task.dart]；桌面端没有等价物，直接跳过。
+/// Android / iOS / macOS 共用 audio_service 的实现（darwin 分支在 macOS 上走
+/// MPNowPlayingInfoCenter / MPRemoteCommandCenter，即控制中心的「正在播放」）。
+/// 鸿蒙走的是另一条路：系统媒体面板由 just_audio 的 ohos 分支创建 AVSession 来
+/// 提供，灭屏存活靠「长时任务」，见 [background_task.dart]；Windows/Linux 没有
+/// 接入，直接跳过。
 library;
 
 import 'dart:async';
@@ -22,8 +25,12 @@ import 'package:flutter/services.dart';
 import 'player.dart' as mf;
 
 /// 当前平台有没有系统级媒体会话可接。
+///
+/// macOS 也算：audio_service 的 darwin 实现原生支持（MPNowPlayingInfoCenter），
+/// 启用后控制中心 / 菜单栏才会出现「正在播放」卡片。
 bool get mediaSessionSupported =>
-    !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+    !kIsWeb &&
+    (Platform.isAndroid || Platform.isIOS || Platform.isMacOS);
 
 class MfMediaSession {
   MfMediaSession._(this._handler);
