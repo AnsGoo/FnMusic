@@ -15,6 +15,7 @@
 - `cached_network_image` 不走自定义 http client → 已用全局 `HttpOverrides`（私有地址 DIRECT）解决。
 - 沙箱内 `flutter test` 会因 HTTP_PROXY 报 "Invalid WebSocket upgrade request"，必须绕代理跑。
 - Windows 构建依赖 windows/CMakeLists.txt 里的全局 `/utf-8` 和 `_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS`（修 just_audio_windows：中文代码页 C4819→error、MSVC 14.51 的 experimental/coroutine STL1011），删了必挂。
+- Android 构建：device_info_plus 9.1.2 的 compileSdk 写死 33，靠 android/build.gradle.kts 里 subprojects + afterEvaluate 反射抬到 36 才能过 AGP 9 的检查；该块必须排在 `evaluationDependsOn(":app")` 之前。`kotlin.incremental=false` 是为了绕开 Windows 上 Kotlin 增量缓存关不掉的报错。
 
 ## 遗留事项
 
