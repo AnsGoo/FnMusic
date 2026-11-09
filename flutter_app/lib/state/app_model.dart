@@ -476,6 +476,14 @@ class AppModel extends ChangeNotifier {
   bool _fnViaNas = false;
   bool get fnViaNas => _fnViaNas;
 
+  /// True when the resolved address is a fnOS unified-gateway link, where the
+  /// backend can sign the user in from the trusted NAS identity without a
+  /// Music Free password (first use still needs one explicit binding).
+  bool get fnGatewayLoginAvailable {
+    final best = _fnProbe?.best;
+    return best != null && isFnGatewayPath(best.toString());
+  }
+
   bool get fnPrepared => _fnProbe?.best != null;
   FnProbeResult? get fnProbe => _fnProbe;
 
@@ -627,8 +635,8 @@ class AppModel extends ChangeNotifier {
   /// is registered as a backup address so the regular failover prober can
   /// hop between LAN / WAN / relay automatically afterwards.
   Future<void> loginFnPrepared({
-    required String username,
-    required String password,
+    String? username,
+    String? password,
   }) async {
     final probe = _fnProbe;
     final best = probe?.best;
@@ -638,7 +646,13 @@ class AppModel extends ChangeNotifier {
       return;
     }
     if (_connecting) return;
-    if (username.trim().isEmpty || password.isEmpty) {
+    final user = username?.trim() ?? '';
+    final pass = password ?? '';
+    final address = best.toString();
+    // Only gateway links carry the NAS identity that makes passwordless
+    // login possible; direct TCP / relay links always need app credentials.
+    final gateway = isFnGatewayPath(address);
+    if (!gateway && (user.isEmpty || pass.isEmpty)) {
       _error = '请填写 Music Free 账号和密码';
       notifyListeners();
       return;
@@ -647,7 +661,31 @@ class AppModel extends ChangeNotifier {
     _error = null;
     notifyListeners();
     try {
-      final active = await client.login(best.toString(), username, password);
+      late final MusicFreeSession active;
+      if (gateway) {
+        try {
+          active = await client.gatewayLogin(address);
+        } on GatewayBindRequiredException {
+          // First time on this NAS: bind once with app credentials, then the
+          // backend issues the session and remembers the mapping.
+          if (user.isEmpty || pass.isEmpty) {
+            throw MusicFreeException(
+              '首次使用需绑定 Music Free 账号，请填写应用账号和密码完成一次绑定',
+            );
+          }
+          active = await client.gatewayBind(address, user, pass);
+        } catch (_) {
+          // Older backends (or a gateway without X-Trim-* headers) do not
+          // expose gateway-login; fall back to a normal password sign-in on
+          // the very same address.
+          if (user.isEmpty || pass.isEmpty) {
+            throw MusicFreeException('请填写 Music Free 账号和密码');
+          }
+          active = await client.login(address, user, pass);
+        }
+      } else {
+        active = await client.login(address, user, pass);
+      }
       final others = probe!.reachable.where((address) => address != best).toList();
       final session = others.isEmpty
           ? active

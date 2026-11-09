@@ -30,6 +30,13 @@ class AuthException extends MusicFreeException {
   AuthException(super.message);
 }
 
+/// The fnOS gateway knows the NAS identity but no Music Free account has been
+/// bound to it yet. The caller should ask once for the app credentials and
+/// call [MusicFreeClient.gatewayBind]; later sign-ins are passwordless.
+class GatewayBindRequiredException extends MusicFreeException {
+  GatewayBindRequiredException(super.message);
+}
+
 class MusicFreeClient {
   MusicFreeClient({http.Client? httpClient})
     : _http = httpClient ?? _defaultClient();
@@ -67,20 +74,74 @@ class MusicFreeClient {
       'username': username,
       'password': password,
     }, base: base);
-    final token = _string(root, ['token']);
-    if (token == null || token.isEmpty) {
-      throw AuthException('登录失败，请检查账号和密码');
-    }
-    final salt = _randomSalt();
-    final session = MusicFreeSession(
-      baseUrl: base,
-      token: token,
-      username: _string(root, ['username']) ?? username,
-      subsonicToken: _string(root, ['subsonicToken']) ?? '',
-      clientSalt: salt,
-    );
+    final session = _sessionFromLogin(root, base, username);
     _session = session;
     return session;
+  }
+
+  /// Signs in through the fnOS unified gateway without app credentials.
+  ///
+  /// The gateway has already authenticated the NAS session; the backend maps
+  /// its injected NAS identity to a Music Free account and issues the same
+  /// session payload as [login]. Only meaningful for `/app/<name>/` links —
+  /// on TCP/relay links the endpoint is disabled (404) and the caller falls
+  /// back to [login].
+  Future<MusicFreeSession> gatewayLogin(String rawUrl) async {
+    final base = _normalize(rawUrl);
+    final root = await _post('rest/api/v1/auth/gateway-login', {}, base: base);
+    if (root['needBind'] == true) {
+      throw GatewayBindRequiredException(
+        _string(root, ['error']) ?? '该飞牛账号尚未绑定 Music Free 账号',
+      );
+    }
+    final token = _string(root, ['token']);
+    if (token == null) {
+      // Old backends (or a gateway that did not inject X-Trim-* headers)
+      // answer 404 with an error object; let the caller fall back to login.
+      throw MusicFreeException(
+        _string(root, ['error']) ?? '网关免密登录不可用，请使用账号密码登录',
+      );
+    }
+    final session = _sessionFromLogin(root, base, '');
+    _session = session;
+    return session;
+  }
+
+  /// First-time binding: verifies the app credentials once, remembers the
+  /// NAS → Music Free mapping and returns a passwordless session.
+  Future<MusicFreeSession> gatewayBind(
+    String rawUrl,
+    String username,
+    String password,
+  ) async {
+    final base = _normalize(rawUrl);
+    final root = await _post('rest/api/v1/auth/gateway-bind', {
+      'username': username,
+      'password': password,
+    }, base: base);
+    final session = _sessionFromLogin(root, base, username);
+    _session = session;
+    return session;
+  }
+
+  MusicFreeSession _sessionFromLogin(
+    Map<String, dynamic> root,
+    Uri base,
+    String fallbackUsername,
+  ) {
+    final token = _string(root, ['token']);
+    if (token == null || token.isEmpty) {
+      throw AuthException(
+        _string(root, ['error']) ?? '登录失败，请检查账号和密码',
+      );
+    }
+    return MusicFreeSession(
+      baseUrl: base,
+      token: token,
+      username: _string(root, ['username']) ?? fallbackUsername,
+      subsonicToken: _string(root, ['subsonicToken']) ?? '',
+      clientSalt: _randomSalt(),
+    );
   }
 
   /// A LAN server must not be routed through the system HTTP proxy: on a Mac

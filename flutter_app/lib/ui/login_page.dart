@@ -6,8 +6,10 @@
 /// - **飞牛快连 (FNID)**: enter the FNID and Music Free credentials — direct
 ///   links (LAN / public IPs) are probed without any fnOS credentials; only
 ///   when none is reachable does the NAS form appear (fnOS account, optional
-///   2FA) to unlock the gateway / relay links. Either way the Music Free
-///   sign-in runs against the best reachable endpoint.
+///   2FA) to unlock the gateway / relay links. On a unified-gateway link the
+///   backend signs the user in from the trusted NAS identity without an app
+///   password (first use binds the account once); other links use the normal
+///   Music Free sign-in.
 library;
 
 import 'package:flutter/material.dart';
@@ -416,7 +418,9 @@ class _LoginPageState extends State<LoginPage> {
       ),
       const SizedBox(height: 14),
       Text(
-        '第二步 · 登录 Music Free',
+        model.fnGatewayLoginAvailable
+            ? '第二步 · 飞牛账号已由网关校验，直接点「登录」即可免密进入；首次使用填一次下方应用账号密码完成绑定'
+            : '第二步 · 登录 Music Free',
         style: const TextStyle(color: Mf.faint, fontSize: 11),
       ),
       const SizedBox(height: 10),

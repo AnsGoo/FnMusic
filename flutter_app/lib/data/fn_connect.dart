@@ -67,6 +67,17 @@ set fnGatewayToken(String? token) {
   _fnGatewayToken = (token == null || token.isEmpty) ? null : token;
 }
 
+/// True when [url] is a fnOS unified-gateway app path (`/app/<name>/...`).
+///
+/// Only these requests reach the backend through its Unix socket, where the
+/// gateway has already validated the NAS session and injected the trusted
+/// `X-Trim-*` identity headers — the precondition for passwordless login.
+/// Direct TCP and relay subdomain links are not gateway paths.
+bool isFnGatewayPath(String url) {
+  final uri = Uri.tryParse(url);
+  return uri != null && uri.path.startsWith('/app/');
+}
+
 /// Relay-ready headers for [url], or null when the URL is not relayed.
 ///
 /// Two kinds of Feiniu links exist:
@@ -80,7 +91,7 @@ set fnGatewayToken(String? token) {
 Map<String, String>? fnRelayHeadersFor(String url, {String? bearerToken}) {
   final uri = Uri.tryParse(url);
   final host = uri?.host ?? '' ;
-  if (uri != null && uri.path.startsWith('/app/') && _fnGatewayToken != null) {
+  if (isFnGatewayPath(url) && _fnGatewayToken != null) {
     return {
       'Authorization': 'trim $_fnGatewayToken',
       if (bearerToken != null && bearerToken.isNotEmpty)
