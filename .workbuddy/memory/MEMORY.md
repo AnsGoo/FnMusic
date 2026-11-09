@@ -21,6 +21,10 @@
   - `audio_service` 与本项目都有 `PlaybackState` → media_session.dart 里 `import 'player.dart' as mf;` 隔开，别改回去。
   - 鸿蒙：module.json5 必须同时有 ability 的 `backgroundModes: ["audioPlayback"]` 和 `ohos.permission.KEEP_BACKGROUND_RUNNING`，再由 EntryAbility 通过 channel `com.seasonyuu.musicfly/background_audio` 起 `backgroundTaskManager` 长时任务（Dart 侧 `lib/audio/background_task.dart`，只在真的 playing 后申请，系统会校验 AVSession 状态）。孤立的 backgroundModes 或孤立的 startBackgroundRunning 都无效。
   - 鸿蒙媒体面板/AVSession 由 just_audio 的 ohos 分支在 ArkTS 侧创建，audio_service 在鸿蒙上没有实现，不要试图在那儿调。
+  - Android 13+ 必须请求 `POST_NOTIFICATIONS`（manifest 声明 + 首次播放时经 channel `musicfly/notification` 请求，见 MainActivity.kt）：前台服务通知本身豁免，但暂停后服务退出前台、通知降级为普通通知，没权限就消失 —— 表现为「暂停后锁屏控制器没了，点不回去」。
+  - 通知小图标必须是单色 vector（`res/drawable/ic_stat_music.xml`）并显式配 `androidNotificationIcon`，否则默认的彩色启动图标会被渲染成白方块。
+  - iOS 后台播放除了 `UIBackgroundModes: audio`，还必须在启动时把 AVAudioSession 配成 playback（`lib/audio/system_audio.dart` 用 audio_session 的 `AudioSessionConfiguration.music()`），否则切后台即静音、锁屏不出 Now Playing。
+  - 鸿蒙构建会把 `audio_session` override 到 pub.dev 0.2.4（无 ohos 实现），所以 `configureSystemAudio()` 必须 try/catch，鸿蒙上必然抛 MissingPluginException。
 
 ## 遗留事项
 
