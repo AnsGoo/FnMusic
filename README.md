@@ -12,7 +12,7 @@
 - **浏览**：歌曲 / 专辑 / 艺术家 / 歌单 / 收藏五个分区，列表滚动到底自动翻页，每行带专辑封面。
 - **搜索**：按关键词搜索歌曲，结果可直接进队列。
 - **播放**：队列上下首、拖动进度、音量，播放结束自动续下一首；坏源自动跳过并说明原因。
-- **后台播放**：锁屏、切后台、拔耳机继续播。Android 走 `audio_service` 的前台服务 + MediaSession（通知栏/锁屏/蓝牙按键可控制，含封面）；鸿蒙声明 `audioPlayback` 长时任务，媒体面板由 just_audio ohos 分支的 AVSession 提供。
+- **后台播放**：锁屏、切后台、拔耳机继续播。Android 走 `audio_service` 的前台服务 + MediaSession（通知栏/锁屏/蓝牙按键可控制，含封面；Android 13+ 首次播放会请求通知权限，拒绝的话暂停后锁屏控制器会消失）；iOS 需 `UIBackgroundModes: audio`；鸿蒙声明 `audioPlayback` 长时任务，媒体面板由 just_audio ohos 分支的 AVSession 提供。
 - **歌词**：读取服务端内嵌歌词，LRC 逐行高亮并跟随播放位置。
 
 ## 目录
