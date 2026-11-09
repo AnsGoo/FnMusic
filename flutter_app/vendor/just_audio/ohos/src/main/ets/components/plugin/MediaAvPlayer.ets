@@ -246,7 +246,10 @@ export class MediaAvPlayer {
       this.playingState();
     }
     // seek 完成后同步给锁屏播控面板，否则面板进度停留在旧位置。
-    this.updateIsPlay(this.isPlaying);
+    // 换源时的初始 seek（未 prepared）不上报：此时参数不全，native 会拒绝（401）。
+    if (this.isPrepared) {
+      this.updateIsPlay(this.isPlaying);
+    }
     console.info(TAG, `AVPlayer seek succeeded, seek time is ${seekDoneTime}`);
   };
   /**

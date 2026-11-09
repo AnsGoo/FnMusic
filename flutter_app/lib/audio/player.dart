@@ -288,13 +288,15 @@ class MfPlayer {
   Future<void> _pushSystemMetadata(
     String title,
     String? artist,
-    String? coverUrl,
-  ) async {
+    String? coverUrl, [
+    Duration? duration,
+  ]) async {
     try {
       await _justAudioMain.invokeMethod('setMetadata', {
         'title': title,
         'artist': artist ?? '',
         'artUri': coverUrl ?? '',
+        'durationMs': duration?.inMilliseconds ?? 0,
       });
     } catch (_) {
       // 平台不支持：Android/iOS 走各自的 media_session/notification 通道。
