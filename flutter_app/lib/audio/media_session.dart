@@ -48,6 +48,8 @@ class MfMediaSession {
           androidNotificationChannelId: 'com.seasonyuu.musicfly.playback',
           androidNotificationChannelName: '播放控制',
           androidNotificationChannelDescription: '锁屏和通知栏里的播放控制',
+          // 通知栏用单色音符，否则默认的彩色启动图标会被系统渲染成白方块。
+          androidNotificationIcon: 'drawable/ic_stat_music',
           // 播放中常驻，避免用户清理通知后前台服务被系统回收。
           androidNotificationOngoing: true,
           // 暂停时退出前台服务：不播放就不要再占着「正在运行」的位置。

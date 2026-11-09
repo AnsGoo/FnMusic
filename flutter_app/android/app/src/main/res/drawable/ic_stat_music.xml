@@ -1,0 +1,12 @@
+<!-- 通知栏/锁屏媒体控件的小图标。必须是纯白单色：Android 会把通知小图标
+     当成 alpha 蒙版染色，直接拿 mipmap/ic_launcher（彩色自适应图标）会在
+     多数设备上显示成一个白方块。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,3v10.55c-0.59,-0.34 -1.27,-0.55 -2,-0.55 -2.21,0 -4,1.79 -4,4s1.79,4 4,4 4,-1.79 4,-4V7h4V3h-6z"/>
+</vector>
