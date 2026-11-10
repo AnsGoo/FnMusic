@@ -143,6 +143,12 @@ class AppModel extends ChangeNotifier {
   DateTime? _lastFailureProbe;
   static const _failureProbeCooldown = Duration(seconds: 10);
 
+  /// Re-establishing the fnOS session (to refresh the gateway / relay tokens)
+  /// is itself rate-limited so a prolonged outage does not hammer the NAS.
+  bool _reauthing = false;
+  DateTime? _lastReauth;
+  static const _reauthCooldown = Duration(minutes: 5);
+
   Section _section = Section.home;
   Detail? _detail;
 
@@ -597,18 +603,28 @@ class AppModel extends ChangeNotifier {
         // Without them FN's WAN links are in the pool but answer 401/403,
         // so the phone would still lose its connection outdoors. A wrong
         // password or 2FA without a code must not block a working LAN login.
+        // Prefer the credentials the user just typed; otherwise fall back to
+        // the NAS account remembered from an earlier FNID sign-in so a pure
+        // LAN login still warms the gateway / relay tokens (without them the
+        // WAN links cannot authenticate once the device leaves the LAN).
+        final creds = (username.isNotEmpty && password.isNotEmpty)
+            ? FnOsCredentials(username, password)
+            : await loadFnOsCredentials();
         var appDomains = const <String>[];
         _fnViaNas = false;
-        if (username.isNotEmpty && password.isNotEmpty) {
+        if (creds != null) {
           try {
             appDomains = await _signInFnOs(
               fnId,
               params,
-              username,
-              password,
+              creds.username,
+              creds.password,
               twoFaCode,
             );
             _fnViaNas = true;
+            // Remember the NAS account so future LAN logins and network
+            // changes can silently re-establish the fnOS session.
+            await saveFnOsCredentials(creds.username, creds.password);
           } catch (_) {
             // Optional — deliberately silent.
           }
@@ -667,6 +683,9 @@ class AppModel extends ChangeNotifier {
       }
       _fnProbe = probe;
       _fnAddressPool = [for (final candidate in all) candidate.address];
+      // Remember the NAS account that unlocked these remote links so they keep
+      // working after a token expiry / network change without re-entering it.
+      await saveFnOsCredentials(username, password);
       unawaited(saveLastFnPort(port));
     } on FnConnectException catch (failure) {
       _error = failure.message;
@@ -910,6 +929,13 @@ class AppModel extends ChangeNotifier {
         for (var i = 0; i < addresses.length; i++)
           if (results[i].online) addresses[i],
       ];
+      if (online.isEmpty && session.fnConnect) {
+        // Every link is down: the device likely left the LAN and the cached
+        // fnOS token expired. Silently re-establish the fnOS session with the
+        // remembered NAS account so the gateway / relay links authenticate
+        // again, then re-probe.
+        unawaited(_recoverFnConnect());
+      }
       debugPrint(
         '[MusicFly] address probe: ${online.length}/${addresses.length} online'
         '${online.isEmpty ? '' : ' -> ${online.join(', ')}'}',
@@ -920,6 +946,74 @@ class AppModel extends ChangeNotifier {
       if (changed || _session != session) notifyListeners();
     } finally {
       _probingAddresses = false;
+    }
+  }
+
+  /// Re-establishes the fnOS session with the remembered NAS account when an
+  /// FNID session has lost every link (left the LAN, cached token expired) so
+  /// the gateway / relay links can authenticate again. Silent — the user only
+  /// notices the connection returning. A 2FA-gated account cannot be recovered
+  /// without a fresh code; in that case the FNID panel must be reopened.
+  Future<void> _recoverFnConnect() async {
+    final session = _session;
+    if (session == null ||
+        !session.fnConnect ||
+        _reauthing ||
+        _disposed) {
+      return;
+    }
+    if (_lastReauth != null &&
+        DateTime.now().difference(_lastReauth!) < _reauthCooldown) {
+      return;
+    }
+    final hasRemote = session.allAddresses.any(
+      (u) => isFnGatewayPath(u.toString()) || isFnRelayHost(u.host),
+    );
+    if (!hasRemote) return;
+    final creds = await loadFnOsCredentials();
+    if (creds == null) return;
+    _reauthing = true;
+    _lastReauth = DateTime.now();
+    try {
+      final fnId = await loadLastFnId();
+      if (fnId == null) return;
+      final params = await resolveFnId(fnId);
+      final appDomains = await _signInFnOs(
+        fnId,
+        params,
+        creds.username,
+        creds.password,
+        null,
+      );
+      // The re-auth may discover app relay subdomains missing from the
+      // original pool; fold them in so the prober can use them too.
+      if (appDomains.isNotEmpty && _session != null) {
+        final relayUris = [
+          for (final d in appDomains)
+            Uri(
+              scheme: 'https',
+              host: d.trim().replaceFirst(RegExp(r':\d+$'), ''),
+              port: 443,
+              path: '/',
+            ),
+        ];
+        final merged = buildAddressPool(
+          _session!.baseUrl,
+          [..._session!.allAddresses, ...relayUris],
+        );
+        final updated = _session!.copyWith(addresses: merged);
+        client.restore(updated);
+        _session = updated;
+        unawaited(_store.save(updated));
+      }
+      debugPrint('[MusicFly] fnOS re-auth ok, re-probing remote links');
+      unawaited(_probeAddresses());
+    } on FnOsTwoFaRequired {
+      debugPrint('[MusicFly] fnOS re-auth needs 2FA; cannot recover silently');
+    } catch (error) {
+      debugPrint('[MusicFly] fnOS re-auth failed: $error');
+    } finally {
+      _reauthing = false;
     }
   }
 

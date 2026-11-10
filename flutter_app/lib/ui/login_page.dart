@@ -50,6 +50,10 @@ class _LoginPageState extends State<LoginPage> {
   /// collapsed so the common LAN sign-in still needs just the FNID.
   bool _fnRemoteExpanded = false;
 
+  /// NAS account remembered from an earlier FNID sign-in; surfaced so the user
+  /// knows remote switching is already armed without re-entering it.
+  String? _rememberedNasUser;
+
   _LoginMode _mode = _LoginMode.direct;
 
   @override
@@ -66,6 +70,17 @@ class _LoginPageState extends State<LoginPage> {
     loadLastFnPort().then((port) {
       if (port != null && mounted) {
         setState(() => _port.text = port);
+      }
+    });
+    // Prefill the remembered fnOS account so the "外网自动切换" section shows
+    // it is already armed, and the user does not have to retype it.
+    loadFnOsCredentials().then((creds) {
+      if (creds != null && mounted) {
+        setState(() {
+          if (_nasUsername.text.isEmpty) _nasUsername.text = creds.username;
+          if (_nasPassword.text.isEmpty) _nasPassword.text = creds.password;
+          _rememberedNasUser = creds.username;
+        });
       }
     });
   }
@@ -338,7 +353,10 @@ class _LoginPageState extends State<LoginPage> {
       Text(
         needsNas
             ? '内网 / 公网直连不可达 · 登录飞牛账号后可通过统一网关 / 中继远程访问'
-            : '第一步 · 连接 FNID：优先直连内网 / 公网，无需飞牛账号；展开下方「外网自动切换」可提前登记飞牛账号，离开内网后自动切换',
+            : _rememberedNasUser != null
+                ? '第一步 · 连接 FNID：优先直连内网 / 公网；已记住飞牛账号 '
+                    '$_rememberedNasUser，离开内网后自动切换'
+                : '第一步 · 连接 FNID：优先直连内网 / 公网，无需飞牛账号；展开下方「外网自动切换」可登记飞牛账号，离开内网后自动切换',
         style: const TextStyle(color: Mf.faint, fontSize: 11),
       ),
       const SizedBox(height: 10),
@@ -374,10 +392,13 @@ class _LoginPageState extends State<LoginPage> {
                 color: Mf.faint,
               ),
               const SizedBox(width: 6),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  '外网自动切换（可选）· 填一次飞牛账号，离开内网后自动走网关 / 中继',
-                  style: TextStyle(color: Mf.faint, fontSize: 11),
+                  _rememberedNasUser != null
+                      ? '外网自动切换 · 已记住飞牛账号 $_rememberedNasUser，'
+                          '离开内网后自动走网关 / 中继'
+                      : '外网自动切换（可选）· 填一次飞牛账号，离开内网后自动走网关 / 中继',
+                  style: const TextStyle(color: Mf.faint, fontSize: 11),
                 ),
               ),
             ],

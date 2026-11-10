@@ -550,3 +550,39 @@ Future<String?> loadLastFnosToken() async {
   fnGatewayToken = value;
   return (value == null || value.isEmpty) ? null : value;
 }
+
+/// Remembered fnOS account for the current FNID. Persisted (plaintext, in the
+/// app's private store) so the app can silently re-establish the fnOS session
+/// and refresh the gateway / relay tokens when the device changes networks or
+/// the cached token expires — that is what makes FNID switch LAN↔WAN without
+/// the user re-entering anything.
+const String _fnosUserKey = 'musicfly.fn.nasUser';
+const String _fnosPassKey = 'musicfly.fn.nasPass';
+
+class FnOsCredentials {
+  const FnOsCredentials(this.username, this.password);
+
+  final String username;
+  final String password;
+}
+
+Future<void> saveFnOsCredentials(String username, String password) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString(_fnosUserKey, username.trim());
+  await prefs.setString(_fnosPassKey, password);
+}
+
+Future<FnOsCredentials?> loadFnOsCredentials() async {
+  final prefs = await SharedPreferences.getInstance();
+  final user = prefs.getString(_fnosUserKey);
+  final pass = prefs.getString(_fnosPassKey);
+  if (user == null || user.isEmpty || pass == null) return null;
+  return FnOsCredentials(user, pass);
+}
+
+/// Drops the remembered fnOS account (e.g. on a full reset).
+Future<void> clearFnOsCredentials() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove(_fnosUserKey);
+  await prefs.remove(_fnosPassKey);
+}
