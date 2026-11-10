@@ -159,4 +159,87 @@ void main() {
       expect(switched.allAddresses, session.allAddresses);
     });
   });
+
+  group('FNID-managed address pool', () {
+    final gateway = Uri.parse('https://myid.fnos.net/app/musicfree/');
+    final pool = <Uri>[
+      gateway,
+      Uri.parse('http://192.168.1.10:14533/'),
+      Uri.parse('https://1.2.3.4:14533/'),
+    ];
+
+    test('hides the internal pool but keeps it for failover', () {
+      final session = MusicFreeSession(
+        baseUrl: gateway,
+        token: 't',
+        username: 'admin',
+        clientSalt: 'salt',
+        addresses: pool,
+        fnConnect: true,
+      );
+      expect(session.allAddresses, pool);
+      expect(session.visibleAddresses, [gateway]);
+
+      final switched = session.copyWith(baseUrl: pool[1]);
+      expect(switched.fnConnect, isTrue);
+      expect(switched.visibleAddresses, [pool[1]]);
+      expect(switched.allAddresses, pool);
+    });
+
+    test('round-trips the flag through JSON', () {
+      final session = MusicFreeSession(
+        baseUrl: gateway,
+        token: 't',
+        username: 'admin',
+        clientSalt: 'salt',
+        addresses: pool,
+        fnConnect: true,
+      );
+      final restored = MusicFreeSession.fromJson(session.toJson());
+      expect(restored!.fnConnect, isTrue);
+      expect(restored.visibleAddresses, [gateway]);
+      expect(restored.allAddresses, pool);
+    });
+
+    test('recognizes a legacy FN pool saved before the flag existed', () {
+      final restored = MusicFreeSession.fromJson({
+        'baseUrl': gateway.toString(),
+        'token': 't',
+        'username': 'admin',
+        'clientSalt': 'salt',
+        'addresses': [
+          pool[1].toString(),
+          pool[2].toString(),
+        ],
+      });
+      expect(restored!.fnConnect, isTrue);
+      expect(restored.visibleAddresses, [gateway]);
+    });
+
+    test('an explicitly ordinary session is never reclassified', () {
+      final ordinary = MusicFreeSession(
+        baseUrl: gateway,
+        token: 't',
+        username: 'admin',
+        clientSalt: 'salt',
+        addresses: pool,
+      );
+      expect(ordinary.fnConnect, isFalse);
+      expect(ordinary.visibleAddresses, pool);
+      final restored = MusicFreeSession.fromJson(ordinary.toJson());
+      expect(restored!.fnConnect, isFalse);
+      expect(restored.visibleAddresses, pool);
+    });
+
+    test('a user-maintained backup list is not mistaken for an FN pool', () {
+      expect(
+        looksLikeFnAddressPool([
+          Uri.parse('http://192.168.1.10:14533'),
+          Uri.parse('https://music.example.com'),
+          Uri.parse('http://10.0.0.5:14533'),
+        ]),
+        isFalse,
+      );
+    });
+  });
 }

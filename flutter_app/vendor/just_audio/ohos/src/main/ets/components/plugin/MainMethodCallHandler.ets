@@ -65,23 +65,39 @@ export class MainMethodCallHandler implements MethodCallHandler {
       // 锁屏面板元数据由 App 主动下发：标准 just_audio 协议不携带歌名/封面，
       // 而 AVMetadataExtractor 对网络流基本抽不到东西。转发给当前唯一的
       // 播放器（MusicFly 全程只有一个 AudioPlayer 实例）。
-      case 'setMetadata':
-        console.info(TAG, `setMetadata from Dart: title=${call.argument("title")}, artist=${call.argument("artist")}, artUri=${call.argument("artUri")}, durationMs=${call.argument("durationMs")}`);
+      case 'setMetadata': {
+        // App 已经带鉴权头把封面下载好，字节直接交过来；不同鸿蒙版本的
+        // StandardMessageCodec 会把它解成 Uint8Array 或 ArrayBuffer，都要接住。
+        const rawArtwork: Object | undefined = call.argument("artwork");
+        const artwork = this.artworkBytes(rawArtwork);
+        console.info(TAG, `setMetadata from Dart: title=${call.argument("title")}, artist=${call.argument("artist")}, artUri=${call.argument("artUri")}, durationMs=${call.argument("durationMs")}, artworkBytes=${artwork ? artwork.length : 0}`);
         this.players.forEach(player => {
           player.setSessionMetadata(
             call.argument("title"),
             call.argument("artist"),
             call.argument("artUri"),
             call.argument("durationMs"),
+            artwork,
           );
         });
         result.success(new Map<String, Object>());
         break;
+      }
       default:
         result.notImplemented();
         break;
     }
 
+  }
+
+  private artworkBytes(value: Object | undefined): Uint8Array | undefined {
+    if (value instanceof Uint8Array) {
+      return value;
+    }
+    if (value instanceof ArrayBuffer) {
+      return new Uint8Array(value);
+    }
+    return undefined;
   }
 
   dispose() {

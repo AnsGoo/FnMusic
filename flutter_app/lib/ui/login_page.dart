@@ -4,9 +4,11 @@
 /// - **普通登录**: a free-form server address (LAN box, tunnel host or
 ///   `localhost`) plus Music Free credentials.
 /// - **飞牛快连 (FNID)**: enter the FNID and Music Free credentials — direct
-///   links (LAN / public IPs) are probed without any fnOS credentials; only
-///   when none is reachable does the NAS form appear (fnOS account, optional
-///   2FA) to unlock the gateway / relay links. On a unified-gateway link the
+///   links (LAN / public IPs) are probed without any fnOS credentials; the
+///   NAS form is mandatory only when none is reachable, and can be filled
+///   optionally while on the LAN to warm up the gateway / relay tokens. Every
+///   link FN reports is kept as a failover address, so the app keeps working
+///   when the device moves between LAN and WAN. On a unified-gateway link the
 ///   backend signs the user in from the trusted NAS identity without an app
 ///   password (first use binds the account once); other links use the normal
 ///   Music Free sign-in.
@@ -43,6 +45,10 @@ class _LoginPageState extends State<LoginPage> {
   final _nasPassword = TextEditingController();
   final _nasTwoFa = TextEditingController();
   final _port = TextEditingController(text: '14533');
+
+  /// The optional "warm up remote links" section on the FNID tab. Kept
+  /// collapsed so the common LAN sign-in still needs just the FNID.
+  bool _fnRemoteExpanded = false;
 
   _LoginMode _mode = _LoginMode.direct;
 
@@ -310,12 +316,17 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   /// Step 1: FNID connection. Direct links are probed without any fnOS
-  /// credentials; the NAS form only appears when every direct link is
-  /// unreachable (remote access rides the gateway / relay). The port field
-  /// follows the same rule: 14533 is assumed silently and the field is only
-  /// revealed once a probe fails, so a non-default setup can correct it.
+  /// credentials; the NAS form is mandatory when every direct link is
+  /// unreachable (remote access rides the gateway / relay), and optional on
+  /// the LAN to warm up those tokens in advance. The port field follows the
+  /// mandatory rule: 14533 is assumed silently and the field is only revealed
+  /// once a probe fails, so a non-default setup can correct it.
   List<Widget> _fnConnectStep1(AppModel model) {
     final needsNas = model.fnNasRequired || model.fnTwoFaRequired;
+    // On the LAN the NAS credentials are optional: filling them mints the
+    // gateway / relay tokens up front so FN's WAN links really work once the
+    // device leaves home. Keep the section collapsed by default.
+    final showNas = needsNas || _fnRemoteExpanded;
     void submit() => model.prepareFnConnect(
       fnId: _fnId.text.trim(),
       nasUsername: _nasUsername.text,
@@ -327,7 +338,7 @@ class _LoginPageState extends State<LoginPage> {
       Text(
         needsNas
             ? '内网 / 公网直连不可达 · 登录飞牛账号后可通过统一网关 / 中继远程访问'
-            : '第一步 · 连接 FNID：优先直连内网 / 公网，无需飞牛账号；直连不可达时才会要求登录',
+            : '第一步 · 连接 FNID：优先直连内网 / 公网，无需飞牛账号；展开下方「外网自动切换」可提前登记飞牛账号，离开内网后自动切换',
         style: const TextStyle(color: Mf.faint, fontSize: 11),
       ),
       const SizedBox(height: 10),
@@ -350,9 +361,33 @@ class _LoginPageState extends State<LoginPage> {
           onChanged: (value) => _port.text = value,
           onSubmit: submit,
         ),
+      ],
+      if (!needsNas) ...[
+        const SizedBox(height: 10),
+        GestureDetector(
+          onTap: () => setState(() => _fnRemoteExpanded = !_fnRemoteExpanded),
+          child: Row(
+            children: [
+              Icon(
+                _fnRemoteExpanded ? Icons.expand_less : Icons.expand_more,
+                size: 14,
+                color: Mf.faint,
+              ),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  '外网自动切换（可选）· 填一次飞牛账号，离开内网后自动走网关 / 中继',
+                  style: TextStyle(color: Mf.faint, fontSize: 11),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+      if (showNas) ...[
         const SizedBox(height: 10),
         MfField(
-          label: '飞牛账号',
+          label: needsNas ? '飞牛账号' : '飞牛账号（可选）',
           value: _nasUsername.text,
           placeholder: 'NAS 本地账号',
           onChanged: (value) => _nasUsername.text = value,
@@ -360,23 +395,27 @@ class _LoginPageState extends State<LoginPage> {
         ),
         const SizedBox(height: 10),
         MfField(
-          label: '飞牛密码',
+          label: needsNas ? '飞牛密码' : '飞牛密码（可选）',
           value: _nasPassword.text,
           password: true,
           onChanged: (value) => _nasPassword.text = value,
           onSubmit: submit,
         ),
-        const SizedBox(height: 10),
-        // The 2FA field stays hidden until the NAS itself reports that the
-        // account has two-step verification enabled.
-        if (model.fnTwoFaRequired)
+        // Mandatory flow reveals 2FA only when the NAS asks for it; the
+        // optional LAN warm-up shows it right away so 2FA accounts can be
+        // registered in one pass.
+        if (needsNas ? model.fnTwoFaRequired : true) ...[
+          const SizedBox(height: 10),
           MfField(
-            label: '两步验证码（该账号已开启 2FA）',
+            label: needsNas
+                ? '两步验证码（该账号已开启 2FA）'
+                : '两步验证码（可选，账号开启 2FA 时填写）',
             value: _nasTwoFa.text,
             placeholder: '6 位动态码',
             onChanged: (value) => _nasTwoFa.text = value,
             onSubmit: submit,
           ),
+        ],
       ],
     ];
   }
@@ -402,7 +441,8 @@ class _LoginPageState extends State<LoginPage> {
             Expanded(
                 child: Text(
                   '第一步完成 · ${model.fnViaNas ? '飞牛账号已连接' : '直连模式'}，'
-                  '探测到 $links 条可达链路',
+                  '探测到 $links 条可达链路，已保存 ${model.fnAddressCount} 条候选'
+                  '用于内网 / 外网自动切换',
                   style: const TextStyle(color: Mf.accentHover, fontSize: 12),
                 ),
               ),

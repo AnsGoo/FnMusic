@@ -26,6 +26,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { AVCastPickerState, avSession } from '@kit.AVSessionKit';
 import MediaSource from './MediaSource';
 import { fileIo } from '@kit.CoreFileKit';
+import { image } from '@kit.ImageKit';
 import { Log, MethodResult } from '@ohos/flutter_ohos';
 
 const TAG = 'MediaAvPlayer';
@@ -540,14 +541,67 @@ export class MediaAvPlayer {
   // Dart 侧下发的曲目时长（毫秒）。转码流（chunked）AVPlayer 拿不到 duration，
   // getDuration() 返回 0，锁屏面板的结束时间就会显示 "--"，所以优先用 Dart 值。
   private dartDurationMs: number = 0;
+  // App 带鉴权头下载好的封面，解码成 PixelMap 后交给 AVSession。让系统服务
+  // 自己去请求 getCoverArt 会缺飞牛网关的 Authorization/Cookie，只会拿到 401，
+  // 锁屏面板就永远是默认图（mediaImage 的 string 分支只适合公开的 URL）。
+  private dartArtwork?: image.PixelMap;
+  // 解码是异步的：切歌之后，上一首的图片不能再覆盖新歌的封面。
+  private artworkToken: number = 0;
 
-  public setSessionMetadata(title?: string, artist?: string, artUri?: string, durationMs?: number) {
+  public setSessionMetadata(title?: string, artist?: string, artUri?: string, durationMs?: number,
+    artwork?: Uint8Array) {
     this.dartTitle = title;
     this.dartArtist = artist;
     this.dartArtUri = artUri;
     this.dartDurationMs = durationMs ?? 0;
+    this.artworkToken++;
+    if (artwork && artwork.length > 0) {
+      this.decodeArtwork(artwork, this.artworkToken);
+    } else {
+      // 切歌时 App 会先推一次不带封面的元数据，先撤掉上一首的图避免串台。
+      this.releaseArtwork();
+    }
     if (this.session) {
       this.setAVMetadata();
+    }
+  }
+
+  private async releaseArtwork() {
+    const old = this.dartArtwork;
+    this.dartArtwork = undefined;
+    if (old) {
+      try {
+        await old.release();
+      } catch (error) {
+        console.error(TAG, `release artwork failed: ${JSON.stringify(error)}`);
+      }
+    }
+  }
+
+  private async decodeArtwork(bytes: Uint8Array, token: number) {
+    try {
+      // codec 传来的 Uint8Array 可能是共享缓冲区的一个视图，拷成独立的
+      // ArrayBuffer 再交给 ImageKit，避免把多余的字节当成图片内容。
+      const buffer = bytes.slice().buffer as ArrayBuffer;
+      const source = image.createImageSource(buffer);
+      // 锁屏面板用不到原图，缩到 512 限制跨进程传递的像素数据大小。
+      let options: image.DecodingOptions = {
+        desiredSize: { width: 512, height: 512 },
+        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
+      };
+      const pixelMap = await source.createPixelMap(options);
+      // ImageSource 由内存缓冲区创建，不持有 fd，交给 GC 回收即可。
+      if (token !== this.artworkToken) {
+        await pixelMap.release();
+        return;
+      }
+      await this.releaseArtwork();
+      this.dartArtwork = pixelMap;
+      if (this.session) {
+        this.setAVMetadata();
+      }
+    } catch (error) {
+      console.error(TAG, `decode artwork failed: ${JSON.stringify(error)}`);
     }
   }
 
@@ -556,22 +610,46 @@ export class MediaAvPlayer {
     try {
       // 注意：mediaImage 传 undefined 会触发 setAVMetadata 401
       // "get metaData failed"（整次设置被拒，锁屏面板就一直是空的），
-      // 所以所有字段都必须落到确定的 string/number。
+      // 所以所有字段都必须落到确定的 string/number 或 PixelMap。
       let title = this.dartTitle ?? this.avMetadata?.title ?? "未知";
       let artist = this.dartArtist ?? this.avMetadata?.artist ?? "未知";
-      console.info(TAG, `setAVMetadata: dartTitle=${this.dartTitle}, extracted=${this.avMetadata?.title}, final=${title}`);
+      let duration = this.dartDurationMs > 0 ? this.dartDurationMs : Math.max(0, this.getDuration());
+      console.info(TAG,
+        `setAVMetadata: dartTitle=${this.dartTitle}, extracted=${this.avMetadata?.title}, final=${title}, hasArtwork=${this.dartArtwork !== undefined}`);
+      // 优先用 App 解码好的 PixelMap；没有时才退回 URL（普通局域网服务器
+      // 的封面不需要鉴权，系统自己就能取到）。空串是合法兜底值，
+      // 千万别传 undefined，也别把 albumArtist 当图片地址用。
+      let mediaImage: string | image.PixelMap = this.dartArtUri ?? "";
+      if (this.dartArtwork) {
+        mediaImage = this.dartArtwork;
+      }
       let metadata: avSession.AVMetadata = {
         assetId: `${id}`,
         title: title,
         artist: artist,
-        mediaImage: this.dartArtUri ?? this.avMetadata?.albumArtist ?? "",
-        duration: this.dartDurationMs > 0 ? this.dartDurationMs : Math.max(0, this.getDuration())
+        mediaImage: mediaImage,
+        duration: duration
+      };
+      let fallback: avSession.AVMetadata = {
+        assetId: `${id}`,
+        title: title,
+        artist: artist,
+        mediaImage: "",
+        duration: duration
       };
       if (this.session) {
         this.session.setAVMetadata(metadata).then(() => {
           console.info(TAG, 'SetAVMetadata successfully');
         }).catch((err: BusinessError) => {
           console.error(TAG, `SetAVMetadata BusinessError: code: ${err.code}, message: ${err.message}`);
+          // 图片被系统拒绝时再退一次不带封面的版本，至少让歌名/歌手/时长
+          // 出现在锁屏面板上，而不是整个 setAVMetadata 都失败。
+          if (this.session) {
+            this.session.setAVMetadata(fallback).catch((retryErr: BusinessError) => {
+              console.error(TAG,
+                `SetAVMetadata fallback error: code: ${retryErr.code}, message: ${retryErr.message}`);
+            });
+          }
         });
       }
     } catch (error) {

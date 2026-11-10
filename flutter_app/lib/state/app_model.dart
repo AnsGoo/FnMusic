@@ -101,6 +101,9 @@ class AppModel extends ChangeNotifier {
        _castSessionFactory = castSessionFactory {
     this.player.onCompleted = _handleCompleted;
     this.player.onFailed = _handleFailure;
+    // A transport failure (leaving the LAN, NAS asleep) must re-probe the FNID
+    // address pool right away instead of waiting for the slow periodic sweep.
+    this.client.onTransportFailure = _onTransportFailure;
     // Lock screen / headset buttons drive the same queue as the in-app
     // transport, so there is only ever one source of truth for "next".
     MfMediaSession.instance?.bind(
@@ -130,6 +133,15 @@ class AppModel extends ChangeNotifier {
   Timer? _addressTimer;
   Map<String, ServerInfo> _addressStatuses = {};
   bool _probingAddresses = false;
+
+  /// Every link the FNID broker reported (LAN / public IP / gateway / relay),
+  /// including the ones unreachable from the current network. Persisted into
+  /// the session at sign-in so the prober can hop when the network changes.
+  List<Uri> _fnAddressPool = const [];
+
+  /// A burst of failing requests must not start a dozen concurrent sweeps.
+  DateTime? _lastFailureProbe;
+  static const _failureProbeCooldown = Duration(seconds: 10);
 
   Section _section = Section.home;
   Detail? _detail;
@@ -210,7 +222,24 @@ class AppModel extends ChangeNotifier {
   String? get error => _error;
   ServerInfo? get serverInfo => _serverInfo;
   bool get probingServer => _probingServer;
-  List<Uri> get serverAddresses => _session?.allAddresses ?? const [];
+
+  /// True when the address pool belongs to FNID and is maintained internally.
+  /// The heuristic also covers a legacy session still living in memory after a
+  /// hot reload (no `fnConnect` flag on that instance yet).
+  bool get addressesManaged {
+    final session = _session;
+    if (session == null) return false;
+    return session.fnConnect || looksLikeFnAddressPool(session.allAddresses);
+  }
+
+  /// Addresses the settings page may display. A FNID session exposes only its
+  /// active endpoint; the LAN / WAN / relay pool stays internal to the prober.
+  List<Uri> get serverAddresses {
+    final session = _session;
+    if (session == null) return const [];
+    return addressesManaged ? <Uri>[session.baseUrl] : session.allAddresses;
+  }
+
   ServerInfo? addressStatus(Uri address) =>
       _addressStatuses[address.toString()];
   Section get section => _section;
@@ -423,6 +452,7 @@ class AppModel extends ChangeNotifier {
     _homeSearching = false;
     _homeSearch = const SearchAll.empty();
     _serverInfo = null;
+    _fnAddressPool = const [];
     _stopAddressProbe();
     notifyListeners();
   }
@@ -487,10 +517,19 @@ class AppModel extends ChangeNotifier {
   bool get fnPrepared => _fnProbe?.best != null;
   FnProbeResult? get fnProbe => _fnProbe;
 
+  /// Number of FN endpoints that will be persisted for LAN / WAN failover.
+  int get fnAddressCount => _fnAddressPool.length;
+
   /// Clears the step-1 result so the login page goes back to the NAS form.
   void resetFnConnect() {
-    if (_fnProbe == null && !_fnTwoFaRequired && !_fnNasRequired) return;
+    if (_fnProbe == null &&
+        _fnAddressPool.isEmpty &&
+        !_fnTwoFaRequired &&
+        !_fnNasRequired) {
+      return;
+    }
     _fnProbe = null;
+    _fnAddressPool = const [];
     _fnTwoFaRequired = false;
     _fnNasRequired = false;
     _fnViaNas = false;
@@ -506,6 +545,14 @@ class AppModel extends ChangeNotifier {
   /// gateway / relay subdomains probed, which require an fnOS sign-in
   /// ([nasUsername]/[nasPassword]); in that case [fnNasRequired] flips true
   /// so the login page reveals the NAS form.
+  ///
+  /// Every link FN reports is retained in [_fnAddressPool] — including links
+  /// that are unreachable from the current network. Dropping them was the
+  /// reason a LAN sign-in lost its connection outdoors: a WAN / gateway /
+  /// relay link that fails at home is often the only one that works away.
+  /// Supplying NAS credentials while a direct link works is optional and
+  /// warms up the tokens those remote links need; failures are ignored so a
+  /// working LAN login is never blocked.
   ///
   /// The outcome is stored in [fnProbe]; sign-in itself happens in step 2
   /// ([loginFnPrepared]).
@@ -524,6 +571,7 @@ class AppModel extends ChangeNotifier {
     _connecting = true;
     _error = null;
     _fnProbe = null;
+    _fnAddressPool = const [];
     _fnTwoFaRequired = false;
     notifyListeners();
     try {
@@ -532,15 +580,48 @@ class AppModel extends ChangeNotifier {
       // Remember the ID even if the step later fails, so the field prefills.
       unawaited(saveLastFnId(fnId));
 
+      final username = nasUsername?.trim() ?? '';
+      final password = nasPassword ?? '';
+      final twoFaCode = nasTwoFaCode?.trim();
+      final directCandidates = buildFnCandidates(params, port);
       // Direct links first: no fnOS session, no tokens — just the backend
       // answering on its own port. This covers the common LAN case and any
       // setup with a public IP / forwarded port.
       final directProbe = await probeFnCandidates(
-        buildFnCandidates(params, port).where((c) => !c.relay).toList(),
+        directCandidates.where((c) => !c.relay).toList(),
       );
       if (directProbe.best != null) {
         _fnNasRequired = false;
+        // Optional warm-up: even though the LAN works, a NAS account mints
+        // the gateway / relay tokens and discovers the app relay subdomains.
+        // Without them FN's WAN links are in the pool but answer 401/403,
+        // so the phone would still lose its connection outdoors. A wrong
+        // password or 2FA without a code must not block a working LAN login.
+        var appDomains = const <String>[];
         _fnViaNas = false;
+        if (username.isNotEmpty && password.isNotEmpty) {
+          try {
+            appDomains = await _signInFnOs(
+              fnId,
+              params,
+              username,
+              password,
+              twoFaCode,
+            );
+            _fnViaNas = true;
+          } catch (_) {
+            // Optional — deliberately silent.
+          }
+        }
+        // Keep EVERY link FN reported, not just the ones answering right now.
+        final pool = appDomains.isEmpty
+            ? directCandidates
+            : buildFnCandidates(
+                params,
+                port,
+                extraRelayDomains: appDomains,
+              );
+        _fnAddressPool = [for (final candidate in pool) candidate.address];
         _fnProbe = directProbe;
         unawaited(saveLastFnPort(port));
         return;
@@ -548,8 +629,6 @@ class AppModel extends ChangeNotifier {
 
       // Nothing reachable directly: remote access must ride the fnOS unified
       // gateway or the relay subdomains, and both require an fnOS session.
-      final username = nasUsername?.trim() ?? '';
-      final password = nasPassword ?? '';
       if (username.isEmpty || password.isEmpty) {
         _fnNasRequired = true;
         notifyListeners();
@@ -557,65 +636,38 @@ class AppModel extends ChangeNotifier {
       }
       _fnNasRequired = true;
       _fnViaNas = true;
-
-      // Sign in to fnOS over its WebSocket protocol and mint the relay
-      // gateway entry-token — without it every app subdomain answers 403.
-      final relayHost = params.relayDomains.isEmpty
-          ? null
-          : params.relayDomains.first;
-      if (relayHost == null) {
-        throw FnConnectException('FNID 已解析但设备没有中继域名');
-      }
-      // A stable device ID makes the NAS remember this app as a trusted
-      // device after one 2FA verify — later sign-ins skip the code prompt.
-      final did = await loadOrCreateFnDid();
-      final fnos = FnOsClient(did: did);
+      final List<String> appDomains;
       try {
-        await fnos.connect('wss://${relayHost.replaceFirst(RegExp(r':\d+$'), '')}/websocket?type=main');
-        try {
-          await fnos.login(username, password);
-        } on FnOsTwoFaRequired {
-          // The server itself says this account needs 2FA — flip the flag so
-          // the login page reveals the code field, then ask the user to retry
-          // with the code filled (a fresh connection is made on the retry).
-          if (nasTwoFaCode == null || nasTwoFaCode.trim().isEmpty) {
-            _fnTwoFaRequired = true;
-            throw FnConnectException('该账号已开启两步验证，请输入 6 位动态验证码后重试');
-          }
-          await fnos.submitTwoFa(nasTwoFaCode);
-        }
-        // The unified gateway (device domain `/app/<name>`) authorizes with
-        // the fnOS session token from the login response; persist it so
-        // gateway links keep working after a restart.
-        final fnosToken = fnos.fnosToken;
-        if (fnosToken != null && fnosToken.isNotEmpty) {
-          fnGatewayToken = fnosToken;
-          unawaited(saveLastFnosToken(fnosToken));
-        }
-        final entryToken = await fnos.exchangeEntryToken();
-        unawaited(saveLastEntryToken(entryToken));
-        fnRelayEntryToken = entryToken;
-        // App relay subdomains (musicfree.<fnId>.fnos.net) — the broker's
-        // device domain only fronts fnOS's own web UI.
-        final entries = await fnos.listAppEntries();
-        final appDomains = [
-          for (final entry in entries)
-            if (entry.fnDomain.isNotEmpty) '${entry.fnDomain}.${fnId.trim()}.fnos.net',
-        ];
-        final probe = await probeFnCandidates(
-          buildFnCandidates(params, port, extraRelayDomains: appDomains),
+        appDomains = await _signInFnOs(
+          fnId,
+          params,
+          username,
+          password,
+          twoFaCode,
         );
-        if (probe.best == null) {
-          throw MusicFreeException(
-            '未找到可达的链路（内网 / 公网 / 网关 / 中继均已探测），'
-            '请确认 NAS 在线且 Music Free 服务已在端口 $port 启动',
-          );
-        }
-        _fnProbe = probe;
-        unawaited(saveLastFnPort(port));
-      } finally {
-        await fnos.close();
+      } on FnOsTwoFaRequired {
+        // The server itself says this account needs 2FA — reveal the code
+        // field and ask the user to retry with it filled.
+        _fnTwoFaRequired = true;
+        throw FnConnectException(
+          '该账号已开启两步验证，请输入 6 位动态验证码后重试',
+        );
       }
+      final all = buildFnCandidates(
+        params,
+        port,
+        extraRelayDomains: appDomains,
+      );
+      final probe = await probeFnCandidates(all);
+      if (probe.best == null) {
+        throw MusicFreeException(
+          '未找到可达的链路（内网 / 公网 / 网关 / 中继均已探测），'
+          '请确认 NAS 在线且 Music Free 服务已在端口 $port 启动',
+        );
+      }
+      _fnProbe = probe;
+      _fnAddressPool = [for (final candidate in all) candidate.address];
+      unawaited(saveLastFnPort(port));
     } on FnConnectException catch (failure) {
       _error = failure.message;
     } on FnOsException catch (failure) {
@@ -630,10 +682,70 @@ class AppModel extends ChangeNotifier {
     }
   }
 
+  /// Signs in to fnOS over its WebSocket protocol, persists the gateway /
+  /// relay tokens and returns the app relay subdomains. Shared by the
+  /// remote-only flow and the optional LAN-side token warm-up.
+  ///
+  /// Throws [FnOsTwoFaRequired] when the NAS demands a code and none was
+  /// supplied; the caller decides whether that is fatal.
+  Future<List<String>> _signInFnOs(
+    String fnId,
+    FnConnectionParams params,
+    String username,
+    String password,
+    String? twoFaCode,
+  ) async {
+    final relayHost = params.relayDomains.isEmpty
+        ? null
+        : params.relayDomains.first;
+    if (relayHost == null) {
+      throw FnConnectException('FNID 已解析但设备没有中继域名');
+    }
+    // A stable device ID makes the NAS remember this app as a trusted device
+    // after one 2FA verify — later sign-ins skip the code prompt.
+    final did = await loadOrCreateFnDid();
+    final fnos = FnOsClient(did: did);
+    try {
+      await fnos.connect(
+        'wss://${relayHost.replaceFirst(RegExp(r':\d+$'), '')}/websocket?type=main',
+      );
+      try {
+        await fnos.login(username, password);
+      } on FnOsTwoFaRequired {
+        if (twoFaCode == null || twoFaCode.isEmpty) rethrow;
+        await fnos.submitTwoFa(twoFaCode);
+      }
+      // The unified gateway (/app/<name>) authorizes with the fnOS session
+      // token from the login response.
+      final fnosToken = fnos.fnosToken;
+      if (fnosToken != null && fnosToken.isNotEmpty) {
+        fnGatewayToken = fnosToken;
+        unawaited(saveLastFnosToken(fnosToken));
+      }
+      // Without the entry-token every app relay subdomain answers 403.
+      final entryToken = await fnos.exchangeEntryToken();
+      fnRelayEntryToken = entryToken;
+      unawaited(saveLastEntryToken(entryToken));
+      // musicfree.<fnId>.fnos.net — the broker's device domain only fronts
+      // fnOS's own web UI, so the app subdomains must be discovered here.
+      final entries = await fnos.listAppEntries();
+      return [
+        for (final entry in entries)
+          if (entry.fnDomain.isNotEmpty)
+            '${entry.fnDomain}.${fnId.trim()}.fnos.net',
+      ];
+    } finally {
+      await fnos.close();
+    }
+  }
+
   /// Step 2 of the Fn Connect sign-in: sign in to the Music Free backend
-  /// through the endpoint probed in step 1. Every other reachable endpoint
-  /// is registered as a backup address so the regular failover prober can
-  /// hop between LAN / WAN / relay automatically afterwards.
+  /// through the endpoint probed in step 1. The **whole** FN link pool —
+  /// including links unreachable from the current network — is kept as an
+  /// *internal* failover pool, so the prober can hop between LAN / WAN /
+  /// gateway / relay when the device changes networks. The session is flagged
+  /// as FNID-managed: settings then shows only the active endpoint and refuses
+  /// user edits, unlike an ordinary login's manual backup addresses.
   Future<void> loginFnPrepared({
     String? username,
     String? password,
@@ -686,10 +798,13 @@ class AppModel extends ChangeNotifier {
       } else {
         active = await client.login(address, user, pass);
       }
-      final others = probe!.reachable.where((address) => address != best).toList();
-      final session = others.isEmpty
-          ? active
-          : active.copyWith(addresses: [active.baseUrl, ...others]);
+      // probe.reachable is only a snapshot of the *current* network. Persist
+      // the complete FN pool instead: a WAN / gateway / relay link that is
+      // dead on the LAN is often the only one that answers outdoors.
+      final session = active.copyWith(
+        addresses: buildAddressPool(active.baseUrl, _fnAddressPool),
+        fnConnect: true,
+      );
       client.restore(session);
       await _store.save(session);
       _session = session;
@@ -707,18 +822,38 @@ class AppModel extends ChangeNotifier {
 
   // ---- Multi-address failover ----------------------------------------------
 
-  /// Probes every configured address on a slow cycle and promotes the best
+  /// Probes every configured address on a relaxed cycle and promotes the best
   /// reachable one. Among reachable addresses the lowest latency wins, which
   /// effectively prefers the LAN endpoint whenever both LAN and WAN are up
-  /// (a LAN round trip is always far quicker than a WAN one). The cadence is
-  /// deliberately relaxed — this is failover, not a heartbeat.
+  /// (a LAN round trip is always far quicker than a WAN one). Transport
+  /// failures additionally trigger an immediate sweep via
+  /// [_onTransportFailure], so a network change is noticed in seconds rather
+  /// than at the next tick.
   void _startAddressProbe() {
     _addressTimer?.cancel();
     if (_session == null) return;
     unawaited(_probeAddresses());
-    _addressTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+    _addressTimer = Timer.periodic(const Duration(minutes: 2), (_) {
       unawaited(_probeAddresses());
     });
+  }
+
+  /// A failed request means the active address may just have gone away (the
+  /// phone left the LAN, the NAS fell asleep, a gateway token expired).
+  /// Re-probe at once; throttled so a burst of failures cannot pile up
+  /// concurrent sweeps. Sessions with a single address have nothing to hop to.
+  void _onTransportFailure() {
+    final session = _session;
+    if (session == null || session.allAddresses.length < 2) return;
+    final now = DateTime.now();
+    final last = _lastFailureProbe;
+    if (last != null && now.difference(last) < _failureProbeCooldown) return;
+    _lastFailureProbe = now;
+    debugPrint(
+      '[MusicFly] transport failure -> probing '
+      '${session.allAddresses.length} addresses (active ${session.baseUrl})',
+    );
+    unawaited(_probeAddresses());
   }
 
   /// Addresses a manual "probe now" is currently running for (settings page).
@@ -771,6 +906,14 @@ class AppModel extends ChangeNotifier {
         for (var i = 0; i < addresses.length; i++)
           addresses[i].toString(): results[i],
       };
+      final online = <Uri>[
+        for (var i = 0; i < addresses.length; i++)
+          if (results[i].online) addresses[i],
+      ];
+      debugPrint(
+        '[MusicFly] address probe: ${online.length}/${addresses.length} online'
+        '${online.isEmpty ? '' : ' -> ${online.join(', ')}'}',
+      );
       final changed = !mapEquals(next, _addressStatuses);
       _addressStatuses = next;
       _promoteBestAddress(session, addresses, results);
@@ -800,12 +943,17 @@ class AppModel extends ChangeNotifier {
       }
     }
     if (bestAddress == null || bestAddress == session.baseUrl) return;
-    final active = results[addresses.indexOf(session.baseUrl)];
-    if (active.online) {
-      final activeLatency = active.latencyMs ?? 1 << 30;
-      // Only hop when the alternative is at least twice as fast with a
-      // meaningful absolute margin.
-      if (!(bestLatency * 2 + 20 < activeLatency)) return;
+    // A legacy session may not list its own baseUrl in `addresses`; indexing
+    // with -1 used to throw here and silently abort the whole sweep.
+    final activeIndex = addresses.indexOf(session.baseUrl);
+    if (activeIndex >= 0) {
+      final active = results[activeIndex];
+      if (active.online) {
+        final activeLatency = active.latencyMs ?? 1 << 30;
+        // Only hop when the alternative is at least twice as fast with a
+        // meaningful absolute margin.
+        if (!(bestLatency * 2 + 20 < activeLatency)) return;
+      }
     }
     _applyAddress(bestAddress);
   }
@@ -814,7 +962,7 @@ class AppModel extends ChangeNotifier {
   /// probe state. Never re-authenticates — both endpoints share credentials.
   Future<void> useServerAddress(Uri address) async {
     final session = _session;
-    if (session == null || address == session.baseUrl) return;
+    if (session == null || addressesManaged || address == session.baseUrl) return;
     if (!session.allAddresses.contains(address)) return;
     _applyAddress(address);
     unawaited(_probeAddresses());
@@ -836,7 +984,8 @@ class AppModel extends ChangeNotifier {
   /// URL cannot be parsed so the dialog can show the problem inline.
   Future<bool> addServerAddress(String rawUrl) async {
     final session = _session;
-    if (session == null) return false;
+    // FNID addresses are resolved by the broker, never supplied by the user.
+    if (session == null || addressesManaged) return false;
     final Uri address;
     try {
       address = client.normalizeAddress(rawUrl);
@@ -859,7 +1008,7 @@ class AppModel extends ChangeNotifier {
   /// address takes over; the last address cannot be removed.
   Future<void> removeServerAddress(Uri address) async {
     final session = _session;
-    if (session == null) return;
+    if (session == null || addressesManaged) return;
     final remaining = session.allAddresses
         .where((existing) => existing != address)
         .toList();
@@ -1670,6 +1819,7 @@ class AppModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    client.onTransportFailure = null;
     _addressTimer?.cancel();
     _castStateSub?.cancel();
     _castVolumeSub?.cancel();

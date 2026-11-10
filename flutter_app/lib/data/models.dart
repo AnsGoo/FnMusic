@@ -145,6 +145,7 @@ class MusicFreeSession {
     this.subsonicToken = '',
     required this.clientSalt,
     this.addresses = const [],
+    this.fnConnect = false,
   });
 
   /// The address every request currently goes to. One of [addresses] —
@@ -155,23 +156,41 @@ class MusicFreeSession {
   final String subsonicToken;
   final String clientSalt;
 
-  /// Every configured server address (e.g. a WAN URL and a LAN URL). May be
-  /// empty for sessions persisted before multi-address support; [baseUrl]
-  /// always stands in for it then.
+  /// Every address the failover prober may hop to. May be empty for sessions
+  /// persisted before multi-address support; [baseUrl] always stands in for
+  /// it then.
+  ///
+  /// For [fnConnect] sessions this is the **internal** pool of links reported
+  /// by the Feiniu broker — never user input, and never shown in settings.
   final List<Uri> addresses;
+
+  /// True when the session was established through FNID. The address pool is
+  /// then owned by the app (LAN / WAN / gateway / relay auto-switching), so the
+  /// settings page exposes only the active endpoint and refuses edits. An
+  /// ordinary login keeps [addresses] as a user-managed backup list.
+  final bool fnConnect;
 
   /// Full address list: [addresses] when present, else just [baseUrl].
   List<Uri> get allAddresses => addresses.isEmpty ? <Uri>[baseUrl] : addresses;
 
-  MusicFreeSession copyWith({Uri? baseUrl, List<Uri>? addresses}) =>
-      MusicFreeSession(
-        baseUrl: baseUrl ?? this.baseUrl,
-        token: token,
-        username: username,
-        subsonicToken: subsonicToken,
-        clientSalt: clientSalt,
-        addresses: addresses ?? this.addresses,
-      );
+  /// Addresses the user is allowed to see and manage. A FNID session hides
+  /// its pool entirely — those links are an implementation detail.
+  List<Uri> get visibleAddresses =>
+      fnConnect ? <Uri>[baseUrl] : allAddresses;
+
+  MusicFreeSession copyWith({
+    Uri? baseUrl,
+    List<Uri>? addresses,
+    bool? fnConnect,
+  }) => MusicFreeSession(
+    baseUrl: baseUrl ?? this.baseUrl,
+    token: token,
+    username: username,
+    subsonicToken: subsonicToken,
+    clientSalt: clientSalt,
+    addresses: addresses ?? this.addresses,
+    fnConnect: fnConnect ?? this.fnConnect,
+  );
 
   String get hostLabel {
     final defaultPort = baseUrl.scheme == 'https' ? 443 : 80;
@@ -190,6 +209,7 @@ class MusicFreeSession {
     'username': username,
     'subsonicToken': subsonicToken,
     'clientSalt': clientSalt,
+    'fnConnect': fnConnect,
   };
 
   static MusicFreeSession? fromJson(Map<String, dynamic> json) {
@@ -205,15 +225,34 @@ class MusicFreeSession {
         extras.add(parsed);
       }
     }
+    final addresses = <Uri>[uri, ...extras];
     return MusicFreeSession(
       baseUrl: uri,
       token: token,
       username: (json['username'] as String?) ?? '',
       subsonicToken: (json['subsonicToken'] as String?) ?? '',
       clientSalt: (json['clientSalt'] as String?) ?? '',
-      addresses: [uri, ...extras],
+      addresses: addresses,
+      // Sessions saved by builds predating the flag carried the full FN pool
+      // in `addresses`; recognize that shape so an upgrade (or a hot reload
+      // of an in-memory legacy session) does not suddenly expose the links.
+      fnConnect:
+          (json['fnConnect'] as bool?) ?? looksLikeFnAddressPool(addresses),
     );
   }
+}
+
+/// Recognizes a legacy FNID address pool: a `/app/<name>` gateway link mixed
+/// with plain IP endpoints. A hand-maintained backup list never looks like
+/// this, so ordinary logins keep their editable addresses after an upgrade.
+bool looksLikeFnAddressPool(List<Uri> addresses) {
+  if (addresses.length < 3) return false;
+  final hasGateway = addresses.any((uri) => uri.path.startsWith('/app/'));
+  final hasIpLink = addresses.any((uri) {
+    if (uri.path.isNotEmpty && uri.path != '/') return false;
+    return RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(uri.host);
+  });
+  return hasGateway && hasIpLink;
 }
 
 /// The app's own version, shown on the settings page. Keep in sync with

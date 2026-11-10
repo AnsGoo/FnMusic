@@ -44,6 +44,13 @@ class MusicFreeClient {
   final http.Client _http;
   MusicFreeSession? _session;
 
+  /// Fired when a request fails at the transport layer (timeout / socket
+  /// error) or the reply is not our API at all (e.g. a captive portal or the
+  /// gateway login page). The host uses it to re-probe the address pool
+  /// immediately instead of waiting for the periodic sweep — this is what
+  /// makes leaving the LAN recover without a several-minute gap.
+  void Function()? onTransportFailure;
+
   MusicFreeSession? get session => _session;
 
   void restore(MusicFreeSession session) => _session = session;
@@ -557,6 +564,16 @@ class MusicFreeClient {
     };
   }
 
+  void _notifyTransportFailure() {
+    final callback = onTransportFailure;
+    if (callback == null) return;
+    try {
+      callback();
+    } catch (_) {
+      // The host's failover prober must never alter this request's error.
+    }
+  }
+
   Future<Map<String, dynamic>> _send(
     Future<http.Response> Function() request,
   ) async {
@@ -564,22 +581,30 @@ class MusicFreeClient {
     try {
       response = await request().timeout(const Duration(seconds: 30));
     } on TimeoutException {
+      _notifyTransportFailure();
       throw MusicFreeException('服务器响应超时，请检查网络或地址');
     } catch (error) {
+      _notifyTransportFailure();
       throw MusicFreeException('无法连接服务器：$error');
     }
 
     final body = response.body;
     if (body.trim().isEmpty) {
+      // Usually a proxy / gateway interfering, not a backend reply.
+      _notifyTransportFailure();
       throw MusicFreeException('服务器返回 HTTP ${response.statusCode}');
     }
     Object? decoded;
     try {
       decoded = jsonDecode(body);
     } catch (_) {
+      // HTML login pages and captive portals look exactly like this. Treat it
+      // as "this address is no longer our server" and let the prober hop.
+      _notifyTransportFailure();
       throw MusicFreeException('服务器返回了无法解析的内容');
     }
     if (decoded is! Map<String, dynamic>) {
+      _notifyTransportFailure();
       throw MusicFreeException('服务器返回了非对象内容');
     }
     return _unwrap(decoded);

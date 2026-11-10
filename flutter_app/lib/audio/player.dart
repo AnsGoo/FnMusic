@@ -14,6 +14,7 @@ import 'package:just_audio/just_audio.dart';
 import '../data/fn_connect.dart';
 import 'background_task.dart';
 import 'stream_probe.dart';
+import 'system_artwork.dart';
 
 class PlaybackState {
   const PlaybackState({
@@ -117,6 +118,14 @@ class MfPlayer {
   /// One probe per track even when both failure channels fire.
   String? _probedTrackId;
   Future<String>? _probeResult;
+
+  /// Cover bytes for the system media UI. Kept alive across tracks so replaying
+  /// a song does not fetch the same image twice.
+  final SystemArtworkLoader _artwork = SystemArtworkLoader();
+
+  /// Bumped on every play/stop: a slow cover download for the previous track
+  /// must not overwrite the new track's lock-screen metadata.
+  int _metadataGeneration = 0;
 
   void _bind() {
     final player = _player;
@@ -245,6 +254,7 @@ class MfPlayer {
     _probeResult = null;
     _currentUrl = streamUrl;
     _stopClock();
+    final generation = ++_metadataGeneration;
     state.value = PlaybackState(
       trackId: trackId,
       title: title,
@@ -266,7 +276,7 @@ class MfPlayer {
       // 鸿蒙锁屏播控面板的内容：加载成功后把曲目信息推给 AVSession。
       // duration 必须带上：转码流（chunked）在系统播放器侧拿不到时长，
       // 缺了它锁屏面板的开始/结束时间会显示 "--"。
-      unawaited(_pushSystemMetadata(title, artist, coverUrl, duration));
+      unawaited(_pushSystemMetadata(title, artist, coverUrl, duration, generation));
       unawaited(_player.play());
       return true;
     } on PlayerInterruptedException {
@@ -285,21 +295,45 @@ class MfPlayer {
 
   /// 推送锁屏播控面板元数据（仅鸿蒙的 vendored just_audio 插件实现了
   /// setMetadata；iOS/Android/macOS 未实现该 handler，异常直接忽略）。
+  ///
+  /// 分两步：先把歌名/歌手/时长推下去，面板立刻能显示；封面则由 App 带鉴权头
+  /// 下载后再补一次。让系统服务自己去请求 `rest/getCoverArt` 会缺飞牛网关的
+  /// Authorization/Cookie，拿到的只会是 401 —— 这正是锁屏封面消失的原因。
   Future<void> _pushSystemMetadata(
     String title,
     String? artist,
-    String? coverUrl, [
+    String? coverUrl,
     Duration? duration,
-  ]) async {
+    int generation,
+  ) async {
+    final payload = <String, dynamic>{
+      'title': title,
+      'artist': artist ?? '',
+      'artUri': coverUrl ?? '',
+      'durationMs': duration?.inMilliseconds ?? 0,
+    };
     try {
-      await _justAudioMain.invokeMethod('setMetadata', {
-        'title': title,
-        'artist': artist ?? '',
-        'artUri': coverUrl ?? '',
-        'durationMs': duration?.inMilliseconds ?? 0,
-      });
+      // 第一次调用兼作能力探测：其它平台没有这个 handler，直接抛
+      // MissingPluginException，后面就没必要下载封面了。
+      await _justAudioMain.invokeMethod('setMetadata', payload);
     } catch (_) {
       // 平台不支持：Android/iOS 走各自的 media_session/notification 通道。
+      return;
+    }
+    // 能走到这里就说明对端是鸿蒙的 vendored 插件（唯一实现 setMetadata 的
+    // 平台）；不用再靠 Platform.operatingSystem 字符串判断，少一处版本差异。
+    if (generation != _metadataGeneration) return;
+    final bytes = await _artwork.load(coverUrl);
+    // 下载期间用户可能已经切歌，迟到的封面不能盖到新歌上。
+    if (bytes == null || generation != _metadataGeneration) return;
+    try {
+      await _justAudioMain.invokeMethod('setMetadata', <String, dynamic>{
+        ...payload,
+        // StandardMessageCodec：Uint8List → ArkTS Uint8Array / ArrayBuffer。
+        'artwork': bytes,
+      });
+    } catch (_) {
+      // 封面补推失败不影响播放，歌名/时长第一次调用时已生效。
     }
   }
 
@@ -359,6 +393,7 @@ class MfPlayer {
 
   Future<void> stop() async {
     _stopClock();
+    _metadataGeneration++;
     await _engine?.stop();
     state.value = const PlaybackState();
     // Nothing is loaded any more, so the HarmonyOS long-running task would just
@@ -368,6 +403,8 @@ class MfPlayer {
 
   void dispose() {
     _stopClock();
+    _metadataGeneration++;
+    _artwork.dispose();
     for (final sub in _subs) {
       unawaited(sub.cancel());
     }

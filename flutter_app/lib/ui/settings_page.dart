@@ -75,6 +75,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _addAddress() async {
     final model = context.read<AppModel>();
+    // FNID pools are resolved internally; never let a stray tap add a link.
+    if (model.addressesManaged) return;
     final controller = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
@@ -128,6 +130,9 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     final model = context.watch<AppModel>();
     final session = model.session;
+    // FNID owns its whole LAN/WAN/relay pool: show one read-only endpoint and
+    // no way to add, remove or manually probe user-visible backup addresses.
+    final managed = model.addressesManaged;
     return Scaffold(
       backgroundColor: Mf.bg,
       // No AppBar, so keep the back button and title clear of the status bar
@@ -205,10 +210,13 @@ class _SettingsPageState extends State<SettingsPage> {
                         _AddressRow(
                           address: address,
                           active: address == session?.baseUrl,
+                          managed: managed,
                         ),
                       ],
-                      const _RowDivider(),
-                      _AddAddressRow(onAdd: _addAddress),
+                      if (!managed) ...[
+                        const _RowDivider(),
+                        _AddAddressRow(onAdd: _addAddress),
+                      ],
                       const _RowDivider(),
                       _InfoRow(
                         label: '服务端',
@@ -229,8 +237,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: Text(
-                    '多地址自动切换：每 5 分钟探测一次所有地址并优选延迟最低的'
-                    '（局域网与外网同时可达时自动走局域网）。',
+                    managed
+                        ? 'FNID 连接：飞牛提供的内网 / 外网 / 网关 / 中继链路'
+                          '由应用自动切换，无需手动配置备用地址。'
+                        : '多地址自动切换：每 2 分钟探测一次所有地址并优选延迟最低的'
+                          '（局域网与外网同时可达时自动走局域网）；请求失败时立即重新探测。',
                     style: const TextStyle(color: Mf.faint, fontSize: 11),
                   ),
                 ),
@@ -282,13 +293,18 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 }
 
-/// One configured server endpoint: probe status, tap to promote it to the
-/// active address, delete when there is more than one.
+/// One configured server endpoint: probe status, manual probe and delete for
+/// user-managed addresses. FNID sessions render a single read-only row.
 class _AddressRow extends StatelessWidget {
-  const _AddressRow({required this.address, required this.active});
+  const _AddressRow({
+    required this.address,
+    required this.active,
+    this.managed = false,
+  });
 
   final Uri address;
   final bool active;
+  final bool managed;
 
   @override
   Widget build(BuildContext context) {
@@ -321,7 +337,11 @@ class _AddressRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  active ? '当前使用' : '备用地址',
+                  managed
+                      ? '当前连接'
+                      : active
+                      ? '当前使用'
+                      : '备用地址',
                   style: TextStyle(
                     color: active ? Mf.accent : Mf.faint,
                     fontSize: 10.5,
@@ -351,30 +371,32 @@ class _AddressRow extends StatelessWidget {
             statusLabel,
             style: TextStyle(color: statusColor, fontSize: 11.5),
           ),
-          const SizedBox(width: 4),
-          // Manual probe: re-check just this address right away. While it
-          // runs the button becomes a spinner; the result repaints the row.
-          model.isProbingAddress(address)
-              ? const Padding(
-                  padding: EdgeInsets.all(8),
-                  child: MfSpinner(size: 14),
-                )
-              : MfIconButton(
-                  icon: Icons.radar_rounded,
-                  size: 26,
-                  glyph: 15,
-                  tooltip: '立即探测',
-                  onTap: () => model.probeAddressNow(address),
-                ),
-          if (model.serverAddresses.length > 1) ...[
+          if (!managed) ...[
             const SizedBox(width: 4),
-            MfIconButton(
-              icon: Icons.close_rounded,
-              size: 24,
-              glyph: 13,
-              tooltip: '删除此地址',
-              onTap: () => model.removeServerAddress(address),
-            ),
+            // Manual probe: re-check just this address right away. While it
+            // runs the button becomes a spinner; the result repaints the row.
+            model.isProbingAddress(address)
+                ? const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: MfSpinner(size: 14),
+                  )
+                : MfIconButton(
+                    icon: Icons.radar_rounded,
+                    size: 26,
+                    glyph: 15,
+                    tooltip: '立即探测',
+                    onTap: () => model.probeAddressNow(address),
+                  ),
+            if (model.serverAddresses.length > 1) ...[
+              const SizedBox(width: 4),
+              MfIconButton(
+                icon: Icons.close_rounded,
+                size: 24,
+                glyph: 13,
+                tooltip: '删除此地址',
+                onTap: () => model.removeServerAddress(address),
+              ),
+            ],
           ],
         ],
       ),

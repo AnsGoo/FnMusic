@@ -234,8 +234,9 @@ export class AudioPlayer implements MethodCallHandler, onChangeMediaAvPlayerStat
 
   /// Dart 侧下发的锁屏面板元数据（歌名/歌手/封面/时长）。MusicFly App 经主通道
   /// 'com.ryanheise.just_audio.methods' 的 setMetadata 方法调用到这里。
-  public setSessionMetadata(title?: string, artist?: string, artUri?: string, durationMs?: number) {
-    this.player?.setSessionMetadata(title, artist, artUri, durationMs);
+  public setSessionMetadata(title?: string, artist?: string, artUri?: string, durationMs?: number,
+    artwork?: Uint8Array) {
+    this.player?.setSessionMetadata(title, artist, artUri, durationMs, artwork);
   }
 
   async onMethodCall(call: MethodCall, result: MethodResult) {

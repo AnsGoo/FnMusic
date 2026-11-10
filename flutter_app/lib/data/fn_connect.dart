@@ -3,8 +3,10 @@
 /// Lets the user type a FNID instead of a server URL. The FNID is resolved
 /// through Feiniu's connection broker into candidate endpoints (NAS LAN IPs,
 /// public IPv4/IPv6 and relay domains), which are probed for a reachable
-/// Music Free backend; the winner becomes the login address and the rest are
-/// registered as backup addresses for the existing failover prober.
+/// Music Free backend; the winner becomes the login address and **every**
+/// candidate is registered in the session's failover pool — including links
+/// that are unreachable from the current network, so leaving the LAN can hop
+/// to a WAN / gateway / relay link instead of losing the connection.
 ///
 /// The broker endpoint and the `authx` signing scheme are the same ones the
 /// Feiniu clients use (reverse engineered, see XDORG-N1/FnMusic).
@@ -387,14 +389,37 @@ List<FnCandidate> buildFnCandidates(
 
 /// Outcome of probing every candidate.
 class FnProbeResult {
-  const FnProbeResult({required this.best, required this.reachable});
+  const FnProbeResult({
+    required this.best,
+    required this.reachable,
+    this.candidates = const [],
+  });
 
   /// Highest-priority reachable address; null when everything failed.
   final Uri? best;
 
-  /// Every reachable address, in candidate order — feed these to the
-  /// session's backup-address list so the failover prober can hop later.
+  /// Reachable addresses in candidate order (shown as "N links found" on the
+  /// login page). This is a snapshot of the *current* network only.
   final List<Uri> reachable;
+
+  /// All endpoints that were probed, in priority order. Unlike [reachable]
+  /// these are kept even when offline right now — see [buildAddressPool].
+  final List<Uri> candidates;
+}
+
+/// Builds the session's failover pool after a Fn Connect sign-in.
+///
+/// [active] is pinned first; every link FN reported follows in FN's priority
+/// order. Keeping the currently-unreachable ones is the whole point: the
+/// prober can only switch to an address it knows about, and a WAN / gateway /
+/// link that fails from inside the LAN often becomes the only working one
+/// once the device leaves the house.
+List<Uri> buildAddressPool(Uri active, Iterable<Uri> fnCandidates) {
+  final pool = <Uri>[active];
+  for (final candidate in fnCandidates) {
+    if (!pool.contains(candidate)) pool.add(candidate);
+  }
+  return pool;
 }
 
 /// Probes [candidates] concurrently (direct links 3 s, relay 10 s) and ranks
@@ -425,7 +450,11 @@ Future<FnProbeResult> probeFnCandidates(
         failures.add(candidates[i].label);
       }
     }
-    return FnProbeResult(best: best, reachable: reachable);
+    return FnProbeResult(
+      best: best,
+      reachable: reachable,
+      candidates: [for (final candidate in candidates) candidate.address],
+    );
   } finally {
     httpClient ?? client.close();
   }
