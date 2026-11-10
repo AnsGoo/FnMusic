@@ -21,10 +21,14 @@
   - `audio_service` 与本项目都有 `PlaybackState` → media_session.dart 里 `import 'player.dart' as mf;` 隔开，别改回去。
   - 鸿蒙：module.json5 必须同时有 ability 的 `backgroundModes: ["audioPlayback"]` 和 `ohos.permission.KEEP_BACKGROUND_RUNNING`，再由 EntryAbility 通过 channel `com.seasonyuu.musicfly/background_audio` 起 `backgroundTaskManager` 长时任务（Dart 侧 `lib/audio/background_task.dart`，只在真的 playing 后申请，系统会校验 AVSession 状态）。孤立的 backgroundModes 或孤立的 startBackgroundRunning 都无效。
   - 鸿蒙媒体面板/AVSession 由 just_audio 的 ohos 分支在 ArkTS 侧创建，audio_service 在鸿蒙上没有实现，不要试图在那儿调。
+  - 鸿蒙锁屏封面链路：`lib/audio/system_artwork.dart` 带 `fnRelayHeadersFor` 下载字节 → `player.dart` 的 `setMetadata` 通道 `artwork` 字段 → vendor `MediaAvPlayer.ets` 解码 PixelMap → `AVMetadata.mediaImage`。直接把 getCoverArt URL 交给系统 AVSessionService 会因缺网关 `Authorization: trim`/relay `Cookie` 而 401，锁屏无封面；`mediaImage` 传 undefined 会让整次 setAVMetadata 报 401，空串才是合法兜底。
   - Android 13+ 必须请求 `POST_NOTIFICATIONS`（manifest 声明 + 首次播放时经 channel `musicfly/notification` 请求，见 MainActivity.kt）：前台服务通知本身豁免，但暂停后服务退出前台、通知降级为普通通知，没权限就消失 —— 表现为「暂停后锁屏控制器没了，点不回去」。
   - 通知小图标必须是单色 vector（`res/drawable/ic_stat_music.xml`）并显式配 `androidNotificationIcon`，否则默认的彩色启动图标会被渲染成白方块。
   - iOS 后台播放除了 `UIBackgroundModes: audio`，还必须在启动时把 AVAudioSession 配成 playback（`lib/audio/system_audio.dart` 用 audio_session 的 `AudioSessionConfiguration.music()`），否则切后台即静音、锁屏不出 Now Playing。
   - 鸿蒙构建会把 `audio_session` override 到 pub.dev 0.2.4（无 ohos 实现），所以 `configureSystemAudio()` 必须 try/catch，鸿蒙上必然抛 MissingPluginException。
+
+- FNID 登录的 LAN/WAN 故障切换：session.addresses 必须保存飞牛返回的**全部**候选链路（含当前网络下不可达的外网/网关/中继），不能只存当次 `reachable`；`MusicFreeClient.onTransportFailure` → AppModel 立即 `_probeAddresses()`（10s 节流、2 分钟周期兜底）实现离开内网秒级切换。网关/中继地址需要 fnOS token，登录页「外网自动切换（可选）」可预热；已加载的播放流不会随地址切换重连。
+- **用户约定：FNID 地址池是内部实现，绝不暴露给用户**。`MusicFreeSession.fnConnect` 标记区分两种登录；FNID 在设置页只显示一条只读「当前连接」，不显示备用地址、不能增删改（`AppModel.addressesManaged` 拦截），只有普通登录才允许手动备用地址。旧会话靠 `looksLikeFnAddressPool()` 推断（`/app/` 网关链路 + 裸 IP 直连混合）。探测/切换仍走完整 `allAddresses`。
 
 ## 遗留事项
 

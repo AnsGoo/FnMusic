@@ -24,6 +24,27 @@
       "flutterMode": "debug"
     },
     {
+      // Windows 本机调试：锁定 windows 桌面设备，不依赖状态栏当前选中的设备。
+      // debug 模式才有热重载 / 热重启；profile、release 模式没有。
+      // 若「Flutter: Select Device」里看不到 Windows，先执行
+      //   flutter config --enable-windows-desktop
+      // 本机 SDK 路径由 .vscode/settings.json 的 dart.flutterSdkPath 指定。
+      "name": "MusicFly (Windows)",
+      "type": "dart",
+      "request": "launch",
+      "cwd": "flutter_app",
+      "program": "lib/main.dart",
+      "deviceId": "windows",
+      "flutterMode": "debug",
+      // VM service 走 127.0.0.1，代理会拦坏它的 WebSocket 升级请求
+      // （flutter test 在这里踩过 "Invalid WebSocket upgrade request"）。
+      // 拼接原有的 NO_PROXY，只补本地例外，不覆盖你已有的内网白名单。
+      "env": {
+        "NO_PROXY": "127.0.0.1,localhost,${env:NO_PROXY}",
+        "no_proxy": "127.0.0.1,localhost,${env:no_proxy}"
+      }
+    },
+    {
       // 运行 flutter_app/test 下的全部测试，可在测试代码中打断点。
       "name": "MusicFly (全部测试)",
       "type": "dart",
