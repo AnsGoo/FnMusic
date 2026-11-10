@@ -45,30 +45,39 @@ class _DetailViewState extends State<DetailView> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              MfIconButton(
-                icon: Icons.arrow_back,
-                size: 30,
-                glyph: 17,
-                tooltip: '返回',
-                onTap: model.back,
-              ),
-              const SizedBox(width: 14),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x59000000),
-                      blurRadius: 26,
-                      offset: Offset(0, 10),
+              // The back affordance floats over the cover's top-left corner
+              // instead of taking its own column, so the cover and the title
+              // keep their horizontal room (the old button squeezed the row).
+              SizedBox(
+                width: widget.wide ? 150 : 104,
+                height: widget.wide ? 150 : 104,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x59000000),
+                            blurRadius: 26,
+                            offset: Offset(0, 10),
+                          ),
+                        ],
+                      ),
+                      child: CoverImage(
+                        url: model.coverUrl(detail.coverId),
+                        size: widget.wide ? 150 : 104,
+                        radius: 12,
+                        circular: detail.isArtist,
+                      ),
+                    ),
+                    Positioned(
+                      left: 6,
+                      top: 6,
+                      child: _DetailBackButton(onTap: model.back),
                     ),
                   ],
-                ),
-                child: CoverImage(
-                  url: model.coverUrl(detail.coverId),
-                  size: widget.wide ? 150 : 104,
-                  radius: 12,
-                  circular: detail.isArtist,
                 ),
               ),
               SizedBox(width: widget.wide ? 20 : 14),
@@ -325,6 +334,32 @@ class _AlbumTileState extends State<_AlbumTile> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A compact back button that overlays the detail cover's top-left corner.
+/// The translucent disc reads on any artwork (dark or light theme) and keeps a
+/// comfortable 40×40 tap target without claiming a column of its own.
+class _DetailBackButton extends StatelessWidget {
+  const _DetailBackButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.42),
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
       ),
     );
   }
