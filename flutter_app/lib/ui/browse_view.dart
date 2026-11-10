@@ -197,8 +197,15 @@ class _Body extends StatelessWidget {
   Widget build(BuildContext context) {
     final model = context.watch<AppModel>();
 
+    // The detail drill-down is its own page: refresh reloads the same album,
+    // playlist or artist.
     if (model.detail != null) {
-      return DetailView(detail: model.detail!, wide: wide);
+      return RefreshIndicator(
+        color: Mf.accent,
+        backgroundColor: Mf.surface,
+        onRefresh: model.reloadDetail,
+        child: DetailView(detail: model.detail!, wide: wide),
+      );
     }
     if (model.loading && model.tracks.isEmpty && model.albums.isEmpty) {
       return const Center(child: MfSpinner());
@@ -212,7 +219,29 @@ class _Body extends StatelessWidget {
       Section.playlists => _playlistGrid(model, wide),
     };
 
-    return content;
+    // Pull-to-refresh. Home re-runs its card loader; other sections re-run the
+    // paged loader. While a search is active the same query is re-issued so the
+    // gesture means "refresh these results" rather than dumping the query.
+    return RefreshIndicator(
+      color: Mf.accent,
+      backgroundColor: Mf.surface,
+      onRefresh: () async {
+        if (model.section == Section.home) {
+          if (model.homeSearching) {
+            await model.submitHomeSearch();
+          } else {
+            await model.loadHome(force: true);
+          }
+        } else {
+          if (model.searching) {
+            await model.submitSearch();
+          } else {
+            await model.load(initial: true);
+          }
+        }
+      },
+      child: content,
+    );
   }
 
   EmptyState _noMatches(String query) => EmptyState(
@@ -267,6 +296,7 @@ class _Body extends StatelessWidget {
     }
     return GridView.builder(
       controller: scroll,
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
       gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
         // Narrow (portrait) screens fit three columns by capping the extent.
@@ -303,6 +333,7 @@ class _Body extends StatelessWidget {
     }
     return GridView.builder(
       controller: scroll,
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
       gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
         // Narrow (portrait) screens fit three columns by capping the extent.
@@ -337,6 +368,7 @@ class _Body extends StatelessWidget {
     }
     return ListView.builder(
       controller: scroll,
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
       itemCount: artists.length,
       itemBuilder: (context, index) {
@@ -368,6 +400,9 @@ class _PagedList extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView.builder(
       controller: controller,
+      // Lets the pull-to-refresh trigger even when the list is short and
+      // would otherwise not be scrollable on Android (ClampingScrollPhysics).
+      physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
       itemCount: itemCount + (footer ? 1 : 0),
       itemBuilder: (context, index) {

@@ -53,6 +53,9 @@ class Detail {
     this.loading = true,
     this.isAlbum = false,
     this.isArtist = false,
+    this.albumId,
+    this.playlistId,
+    this.artistId,
   });
 
   final String title;
@@ -68,6 +71,12 @@ class Detail {
   /// Marks the artist page, which shows a circular avatar and the album
   /// grid instead of a track list.
   final bool isArtist;
+
+  /// The source id behind this drill-down, so a pull-to-refresh can reload
+  /// the same album / playlist / artist without keeping the original object.
+  final String? albumId;
+  final String? playlistId;
+  final String? artistId;
 
   Detail copyWith({
     List<Track>? tracks,
@@ -1433,6 +1442,7 @@ class AppModel extends ChangeNotifier {
       subtitle: '${album.artistLine} · ${album.trackCount} 首',
       coverId: album.coverId,
       isAlbum: true,
+      albumId: album.id,
     );
     _lyricsVisible = false;
     notifyListeners();
@@ -1453,6 +1463,7 @@ class AppModel extends ChangeNotifier {
       title: playlist.name,
       subtitle: '${playlist.trackCount ?? 0} 首',
       coverId: playlist.coverId,
+      playlistId: playlist.id,
     );
     _lyricsVisible = false;
     notifyListeners();
@@ -1476,6 +1487,7 @@ class AppModel extends ChangeNotifier {
       subtitle: artist.albumCount > 0 ? '${artist.albumCount} 张专辑' : '艺术家',
       coverId: artist.coverId,
       isArtist: true,
+      artistId: artist.id,
     );
     _lyricsVisible = false;
     notifyListeners();
@@ -1489,6 +1501,41 @@ class AppModel extends ChangeNotifier {
     } on MusicFreeException catch (failure) {
       _detail = _detail?.copyWith(loading: false);
       _error = failure.message;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  /// Re-fetches the open drill-down page (album / playlist / artist) so a
+  /// pull-to-refresh on the detail view reloads the same content.
+  Future<void> reloadDetail() async {
+    final detail = _detail;
+    if (detail == null) return;
+    _detail = detail.copyWith(loading: true);
+    notifyListeners();
+    try {
+      if (detail.albumId != null) {
+        final tracks = await client.albumTracks(detail.albumId!);
+        _detail = _detail?.copyWith(tracks: tracks, loading: false);
+      } else if (detail.playlistId != null) {
+        final tracks = await client.playlistTracks(detail.playlistId!);
+        _detail = _detail?.copyWith(tracks: tracks, loading: false);
+      } else if (detail.artistId != null) {
+        final page = await client.artistDetail(detail.artistId!);
+        _detail = _detail?.copyWith(
+          albums: page.albums,
+          loading: false,
+          subtitle: '${page.albums.length} 张专辑',
+        );
+      } else {
+        _detail = detail.copyWith(loading: false);
+      }
+    } on MusicFreeException catch (failure) {
+      _detail = _detail?.copyWith(loading: false);
+      _error = failure.message;
+    } catch (failure) {
+      _detail = _detail?.copyWith(loading: false);
+      _error = '加载失败：$failure';
     } finally {
       notifyListeners();
     }

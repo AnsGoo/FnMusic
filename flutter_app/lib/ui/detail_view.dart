@@ -158,6 +158,8 @@ class _DetailViewState extends State<DetailView> {
                 )
               : ListView.builder(
                   controller: _scroll,
+                  // Lets pull-to-refresh fire even when the track list is short.
+                  physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
                   itemCount: detail.tracks.length,
                   itemBuilder: (context, index) {
@@ -216,6 +218,7 @@ class _DetailViewState extends State<DetailView> {
         Expanded(
           child: GridView.builder(
             controller: _scroll,
+            physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
             gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
               // Narrow (portrait) screens fit three columns by capping the

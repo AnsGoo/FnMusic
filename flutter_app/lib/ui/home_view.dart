@@ -41,6 +41,9 @@ class HomeView extends StatelessWidget {
         // row is dropped to keep a single search box on screen.
         final paneWide = constraints.maxWidth >= 760;
         return ListView(
+          // Lets pull-to-refresh trigger even when the home cards fit on one
+          // screen (Android's ClampingScrollPhysics would otherwise block it).
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
           children: [
             if (!paneWide) ...[
