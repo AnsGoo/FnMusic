@@ -106,21 +106,30 @@ class _Toolbar extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Phones keep their navigation in the drawer; this button is the
-              // visible alternative to swiping in from the left edge.
-              if (hasDrawer) ...[
-                MfIconButton(
-                  icon: Icons.menu_rounded,
-                  size: 38,
-                  glyph: 21,
-                  tooltip: '打开侧边栏',
-                  onTap: () => Scaffold.maybeOf(context)?.openDrawer(),
-                ),
-                const SizedBox(width: 4),
-              ],
+              // A detail page replaces the section title / drawer menu with a
+              // back button on the standard toolbar left side, so the cover and
+              // its title keep their full width and nothing floats over the art.
               if (hasDetail)
-                const SizedBox.shrink()
-              else
+                MfIconButton(
+                  icon: Icons.arrow_back,
+                  size: 38,
+                  glyph: 18,
+                  tooltip: '返回',
+                  onTap: model.back,
+                )
+              else ...[
+                // Phones keep their navigation in the drawer; this button is the
+                // visible alternative to swiping in from the left edge.
+                if (hasDrawer) ...[
+                  MfIconButton(
+                    icon: Icons.menu_rounded,
+                    size: 38,
+                    glyph: 21,
+                    tooltip: '打开侧边栏',
+                    onTap: () => Scaffold.maybeOf(context)?.openDrawer(),
+                  ),
+                  const SizedBox(width: 4),
+                ],
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -147,6 +156,7 @@ class _Toolbar extends StatelessWidget {
                     ],
                   ),
                 ),
+              ],
               if (hasDetail) const Spacer(),
               // On desktop the search sits beside the title; phones get a
               // full-width second row below it.
