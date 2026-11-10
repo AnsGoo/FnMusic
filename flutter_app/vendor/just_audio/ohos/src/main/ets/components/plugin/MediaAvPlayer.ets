@@ -30,6 +30,147 @@ import { image } from '@kit.ImageKit';
 import { Log, MethodResult } from '@ohos/flutter_ohos';
 
 const TAG = 'MediaAvPlayer';
+
+/// 系统媒体面板（锁屏 / 耳机 / 蓝牙）的「上一首 / 下一首」必须交给 Dart 队列。
+/// MusicFly 每次只把一首歌 setUrl 给插件，插件内部的 songList 恒为 1 首：
+/// 原生 playNext() 在 DEFAULT 模式下直接 return，playPrevious() 只会重播
+/// 当前曲，所以锁屏按钮点了没反应。MainMethodCallHandler 会注入一个转发器，
+/// 把命令经 MethodChannel 送到 AppModel.next()/previous()。没有注入时（其它
+/// 使用本插件的 App）仍保留插件自带的原生切歌行为。
+///
+/// 用 AppStorage 而不用模块级变量：ArkTS 打包后 MainMethodCallHandler 与
+/// MediaAvPlayer 可能落在不同模块记录里，同一个 .ets 的顶层变量各有副本
+/// （实测 on playNext 时 forwarder=false，尽管插件构造时已注册）。AppStorage
+/// 是进程级全局，EntryAbility 与插件之间共享 context/mediaService 已验证可用。
+export const MF_MEDIA_COMMAND_KEY = 'musicflyMediaCommandForwarder';
+
+export class MfMediaCommandForwarder {
+  private handler: (command: string) => boolean;
+
+  constructor(handler: (command: string) => boolean) {
+    this.handler = handler;
+  }
+
+  forward(command: string): boolean {
+    return this.handler(command);
+  }
+}
+
+/// AVSession 的命令回调只能注册一次，而且**不能绑定到某个 MediaAvPlayer 实例**：
+/// 每次 disposeAllPlayers / 引擎热重启都会新建实例，原来那套「先 off 全部命令
+/// 再 on 回本实例」有两个致命问题 —— off 会把系统面板的 supported commands
+/// 清掉，且多个实例异步 createSession 时会互相把对方刚注册的回调解绑。实测
+/// 结果是锁屏按下一首时应用侧一条 `on playNext` 都收不到，系统却显示按钮可用。
+/// 改成全局稳定回调：命令到了再从 AppStorage 取「当前」转发器 / 活跃实例。
+export const MF_SESSION_LISTENER_KEY = 'musicflySessionCommandListeners';
+
+export function mfRegisterSessionCommands(session: avSession.AVSession): void {
+  if (AppStorage.has(MF_SESSION_LISTENER_KEY)) {
+    return;
+  }
+  try {
+    session.on('play', () => {
+      mfDispatchPanelCommand('play');
+    });
+    session.on('pause', () => {
+      mfDispatchPanelCommand('pause');
+    });
+    session.on('playNext', () => {
+      mfDispatchPanelCommand('next');
+    });
+    session.on('playPrevious', () => {
+      mfDispatchPanelCommand('previous');
+    });
+    AppStorage.setOrCreate(MF_SESSION_LISTENER_KEY, true);
+    console.info(TAG, 'AVSession command listeners registered');
+  } catch (error) {
+    console.error(TAG, `register AVSession commands failed: ${JSON.stringify(error)}`);
+  }
+}
+
+export function mfDispatchPanelCommand(command: string): void {
+  console.info(TAG, `AVSession command received: ${command}`);
+  const forwarder = AppStorage.get(MF_MEDIA_COMMAND_KEY) as MfMediaCommandForwarder | undefined;
+  if (forwarder) {
+    try {
+      if (forwarder.forward(command)) {
+        console.info(TAG, `AVSession command forwarded to Dart: ${command}`);
+        return;
+      }
+    } catch (error) {
+      console.error(TAG, `forward command failed: ${JSON.stringify(error)}`);
+    }
+  }
+  // 转发器还没注册（或通道已失效）时保留插件原生行为，至少按钮不是死的。
+  const active = AppStorage.get(MF_ACTIVE_PLAYER_KEY) as MediaAvPlayer | undefined;
+  if (active) {
+    active.handlePanelCommand(command);
+  } else {
+    console.error(TAG, `no active player for command: ${command}`);
+  }
+}
+
+/// 锁屏面板的元数据必须是**进程级唯一**的。热重启 / 重新登录会再建一个
+/// AudioPlayer → MediaAvPlayer，而旧实例仍持有自己的 dartTitle 与 AVSession；
+/// 主通道的 setMetadata 若落到旧实例，锁屏就一直显示上一首（App 内是 A、
+/// 锁屏是 B）。把活跃实例和曲目快照放 AppStorage，任何实例收到的元数据都写
+/// 到同一份状态，新会话创建后也能直接读到当前曲目。
+export const MF_ACTIVE_PLAYER_KEY = 'musicflyActiveMediaPlayer';
+export const MF_AV_METADATA_KEY = 'musicflyAvMetadataSnapshot';
+export const MF_AV_SESSION_KEY = 'musicflySharedAvSession';
+
+/// SDK 明确「An ability can only create one AVSession」。缓存创建 Promise：
+/// 热重启 / 重建 AudioPlayer 时不再重复 createAVSession，锁屏始终只有一张
+/// 卡片，元数据也只往这一处写。
+export function mfSharedSession(context: common.UIAbilityContext): Promise<avSession.AVSession> {
+  let pending = AppStorage.get(MF_AV_SESSION_KEY) as Promise<avSession.AVSession> | undefined;
+  if (!pending) {
+    pending = avSession.createAVSession(context, 'SESSION_NAME', 'audio').then((created) => {
+      created.activate();
+      return created;
+    });
+    AppStorage.setOrCreate(MF_AV_SESSION_KEY, pending);
+  }
+  return pending;
+}
+
+export class MfAvMetadata {
+  title: string = '';
+  artist: string = '';
+  artUri: string = '';
+  durationMs: number = 0;
+  /// 曲目的稳定标识（Dart 下发 trackId）。assetId 每次推送都递增时，系统会把
+  /// 同一首歌的「无封面 → 补推 → 封面」当成三个不同媒体项，锁屏卡片可能一直
+  /// 停在第一次那个条目上。同曲保持同一个 assetId、换曲才变。
+  assetId: string = '';
+  revision: number = 0;
+  artwork?: image.PixelMap;
+  /// 串行化 AVSession.setAVMetadata：异步回调（尤其失败后的 fallback）不能
+  /// 把上一首的歌名写回到新歌上。
+  writeChain: Promise<void> = Promise.resolve();
+}
+
+export function mfMetadata(): MfAvMetadata {
+  let snapshot = AppStorage.get(MF_AV_METADATA_KEY) as MfAvMetadata | undefined;
+  if (!snapshot) {
+    snapshot = new MfAvMetadata();
+    AppStorage.setOrCreate(MF_AV_METADATA_KEY, snapshot);
+  }
+  return snapshot;
+}
+
+/// 主通道统一入口：只写当前活跃实例，避免「主通道 handler 与 players 表不是
+/// 同一份」时元数据丢失。返回 false 表示活跃实例尚未创建，由调用方兜底。
+export function mfApplySystemMetadata(title?: string, artist?: string, artUri?: string,
+  durationMs?: number, artwork?: Uint8Array, trackId?: string): boolean {
+  const active = AppStorage.get(MF_ACTIVE_PLAYER_KEY) as MediaAvPlayer | undefined;
+  if (active) {
+    active.setSessionMetadata(title, artist, artUri, durationMs, artwork, trackId);
+    return true;
+  }
+  return false;
+}
+
 const OPERATE_ERROR: number = 801;
 const AVPLAYER_STATE_ERROR: number = 5400102;
 const AVPLAYER_IO_ERROR: number = 5400103;
@@ -134,7 +275,17 @@ export class MediaAvPlayer {
   private playMusicIndex: number = 0
 
   constructor() {
+    // 后建的实例成为唯一「活跃」实例：旧实例的异步回调（prepared /
+    // decodeArtwork / setAVMetadata 失败重试）不得再往锁屏写旧歌名。
+    AppStorage.setOrCreate(MF_ACTIVE_PLAYER_KEY, this);
     this.initAudioPlayer();
+  }
+
+  /// 系统面板的 play/pause/next/previous 回调可能仍绑在旧实例上（AVSession
+  /// 是全局共享的），统一转交给当前活跃实例，避免命令打到已释放的 AVPlayer。
+  private activePlayer(): MediaAvPlayer {
+    const active = AppStorage.get(MF_ACTIVE_PLAYER_KEY) as MediaAvPlayer | undefined;
+    return active ?? this;
   }
 
   setMediaAvPlayerStateChange(listener: onChangeMediaAvPlayerState) {
@@ -154,6 +305,11 @@ export class MediaAvPlayer {
   }
 
   private playCall: () => void = async () => {
+    const target = this.activePlayer();
+    if (target !== this) {
+      target.playCall();
+      return;
+    }
     console.info(TAG, `on play , do play task`);
     if (this.isFirst) {
       await this.loadAssent(0);
@@ -162,15 +318,37 @@ export class MediaAvPlayer {
     }
   };
   private pauseCall: () => void = () => {
+    const target = this.activePlayer();
+    if (target !== this) {
+      target.pauseCall();
+      return;
+    }
     console.info(TAG, `on pause , do pause task`);
     this.pause();
   };
+  /// 返回 true 表示命令已转给 Dart，原生不必再用只有 1 首的 songList 切歌。
+  private forwardSystemCommand(command: string): boolean {
+    const forwarder = AppStorage.get(MF_MEDIA_COMMAND_KEY) as MfMediaCommandForwarder;
+    if (forwarder !== undefined && forwarder !== null) {
+      return forwarder.forward(command);
+    }
+    return false;
+  }
+
   private playNextCall: () => void = () => {
-    console.info(TAG, `on playNext , do playNext task`);
+    const forwarded = this.forwardSystemCommand('next');
+    console.info(TAG, `on playNext: forwarded=${forwarded}, songList=${this.songList.length}`);
+    if (forwarded) {
+      return;
+    }
     this.playNextAuto();
   };
   private playPreviousCall: () => void = () => {
-    console.info(TAG, `on playPrevious , do playPrevious task`);
+    const forwarded = this.forwardSystemCommand('previous');
+    console.info(TAG, `on playPrevious: forwarded=${forwarded}, songList=${this.songList.length}`);
+    if (forwarded) {
+      return;
+    }
     this.playPrevious();
   };
   /**
@@ -336,7 +514,8 @@ export class MediaAvPlayer {
         }
         // App 已通过 setMetadata 下发曲目信息时，忽略 fetchMetadata 的结果
         // —— 它在网络流上经常异步晚到且字段为空，会覆盖掉正确的标题。
-        if (!this.dartTitle) {
+        // 用全局快照判断，重建播放器后旧实例也不会拿上一首的提取结果回填。
+        if (mfMetadata().title.length === 0) {
           this.avMetadata = await this.avMetadataExtractor?.fetchMetadata();
         }
         this.setAVMetadata();
@@ -454,10 +633,31 @@ export class MediaAvPlayer {
     if (!this.session) {
       return;
     }
-    this.session.on('play', this.playCall);
-    this.session.on('pause', this.pauseCall);
-    this.session.on('playNext', this.playNextCall);
-    this.session.on('playPrevious', this.playPreviousCall);
+    // 只注册一次全局命令回调。绝不要在这里 off()：AVSession.off 会更新系统
+    // 面板的 supported commands，多实例异步 createSession 时后注册的 off 会
+    // 把前一个实例刚 on 的回调一起清掉，锁屏按钮就成了摆设。
+    mfRegisterSessionCommands(this.session);
+  }
+
+  /// 转发器不可用时的原生兜底（普通 App 仍可用插件自带播放列表）。
+  public handlePanelCommand(command: string): void {
+    console.info(TAG, `native fallback command: ${command}`);
+    switch (command) {
+      case 'play':
+        this.playCall();
+        break;
+      case 'pause':
+        this.pauseCall();
+        break;
+      case 'next':
+        this.playNextAuto();
+        break;
+      case 'previous':
+        this.playPrevious();
+        break;
+      default:
+        break;
+    }
   }
 
   /**
@@ -528,32 +728,26 @@ export class MediaAvPlayer {
     if (this.musicIndex !== musicIndex) {
       this.musicIndex = musicIndex;
     }
-    if (this.session !== undefined) {
-      this.setAVMetadata();
-    }
+    this.setAVMetadata();
   }
 
-  /// Dart 侧直接下发的曲目信息（歌名/歌手/封面地址）。AVMetadataExtractor 对
-  /// 网络流经常抽不到元数据，而 App 本来就知道这些字段，直接用它的最可靠。
+  /// 曲目信息改成进程级全局快照（见 mfMetadata）。只存在实例字段时，重建
+  /// AudioPlayer 后新会话读到的是 undefined/旧值，锁屏会显示上一首。
   private dartTitle?: string;
-  private dartArtist?: string;
-  private dartArtUri?: string;
-  // Dart 侧下发的曲目时长（毫秒）。转码流（chunked）AVPlayer 拿不到 duration，
-  // getDuration() 返回 0，锁屏面板的结束时间就会显示 "--"，所以优先用 Dart 值。
-  private dartDurationMs: number = 0;
-  // App 带鉴权头下载好的封面，解码成 PixelMap 后交给 AVSession。让系统服务
-  // 自己去请求 getCoverArt 会缺飞牛网关的 Authorization/Cookie，只会拿到 401，
-  // 锁屏面板就永远是默认图（mediaImage 的 string 分支只适合公开的 URL）。
-  private dartArtwork?: image.PixelMap;
-  // 解码是异步的：切歌之后，上一首的图片不能再覆盖新歌的封面。
   private artworkToken: number = 0;
 
   public setSessionMetadata(title?: string, artist?: string, artUri?: string, durationMs?: number,
-    artwork?: Uint8Array) {
-    this.dartTitle = title;
-    this.dartArtist = artist;
-    this.dartArtUri = artUri;
-    this.dartDurationMs = durationMs ?? 0;
+    artwork?: Uint8Array, trackId?: string) {
+    const snapshot = mfMetadata();
+    snapshot.title = title ?? '';
+    snapshot.artist = artist ?? '';
+    snapshot.artUri = artUri ?? '';
+    snapshot.durationMs = durationMs ?? 0;
+    // 同一首歌的所有推送（含封面补推、播放开始后的重推）共用一个 assetId。
+    snapshot.assetId = (trackId !== undefined && trackId.length > 0)
+      ? trackId : `${snapshot.title}|${snapshot.artist}`;
+    snapshot.revision++;
+    this.dartTitle = snapshot.title;
     this.artworkToken++;
     if (artwork && artwork.length > 0) {
       this.decodeArtwork(artwork, this.artworkToken);
@@ -561,14 +755,14 @@ export class MediaAvPlayer {
       // 切歌时 App 会先推一次不带封面的元数据，先撤掉上一首的图避免串台。
       this.releaseArtwork();
     }
-    if (this.session) {
-      this.setAVMetadata();
-    }
+    // 会话尚未就绪也要走一遍：全局快照已更新，createSession 完成后会补写。
+    this.setAVMetadata();
   }
 
   private async releaseArtwork() {
-    const old = this.dartArtwork;
-    this.dartArtwork = undefined;
+    const snapshot = mfMetadata();
+    const old = snapshot.artwork;
+    snapshot.artwork = undefined;
     if (old) {
       try {
         await old.release();
@@ -596,65 +790,97 @@ export class MediaAvPlayer {
         return;
       }
       await this.releaseArtwork();
-      this.dartArtwork = pixelMap;
-      if (this.session) {
-        this.setAVMetadata();
-      }
+      const snapshot = mfMetadata();
+      snapshot.artwork = pixelMap;
+      snapshot.revision++;
+      this.setAVMetadata();
     } catch (error) {
       console.error(TAG, `decode artwork failed: ${JSON.stringify(error)}`);
     }
   }
 
   async setAVMetadata() {
-    let id = this.musicIndex;
+    // 只有当前活跃实例能写锁屏。旧实例的 prepared / updateMusicIndex /
+    // decodeArtwork / 失败重试等异步回调可能晚到，会把上一首 B 写回到新歌 A 上。
+    const active = AppStorage.get(MF_ACTIVE_PLAYER_KEY) as MediaAvPlayer | undefined;
+    if (active !== undefined && active !== this) {
+      return;
+    }
+    const session = this.session;
+    if (!session) {
+      // 会话还在异步创建：全局快照已保存，createSession() 完成后会补写。
+      return;
+    }
+    const snapshot = mfMetadata();
+    const revision = snapshot.revision;
     try {
       // 注意：mediaImage 传 undefined 会触发 setAVMetadata 401
       // "get metaData failed"（整次设置被拒，锁屏面板就一直是空的），
       // 所以所有字段都必须落到确定的 string/number 或 PixelMap。
-      let title = this.dartTitle ?? this.avMetadata?.title ?? "未知";
-      let artist = this.dartArtist ?? this.avMetadata?.artist ?? "未知";
-      let duration = this.dartDurationMs > 0 ? this.dartDurationMs : Math.max(0, this.getDuration());
-      console.info(TAG,
-        `setAVMetadata: dartTitle=${this.dartTitle}, extracted=${this.avMetadata?.title}, final=${title}, hasArtwork=${this.dartArtwork !== undefined}`);
+      let title = snapshot.title.length > 0 ? snapshot.title : (this.avMetadata?.title ?? "未知");
+      let artist = snapshot.artist.length > 0 ? snapshot.artist : (this.avMetadata?.artist ?? "未知");
+      let duration = snapshot.durationMs > 0 ? snapshot.durationMs : Math.max(0, this.getDuration());
       // 优先用 App 解码好的 PixelMap；没有时才退回 URL（普通局域网服务器
-      // 的封面不需要鉴权，系统自己就能取到）。空串是合法兜底值，
-      // 千万别传 undefined，也别把 albumArtist 当图片地址用。
-      let mediaImage: string | image.PixelMap = this.dartArtUri ?? "";
-      if (this.dartArtwork) {
-        mediaImage = this.dartArtwork;
+      // 的封面不需要鉴权，系统自己就能取到）。空串是合法兜底值。
+      let mediaImage: string | image.PixelMap = snapshot.artUri;
+      if (snapshot.artwork) {
+        mediaImage = snapshot.artwork;
       }
+      // assetId 按曲目固定：同曲多次推送（封面、播放开始后重推）不改标识，
+      // 换曲才变。以前每次推送都用 mf-${revision}，系统在锁屏卡片上可能一直
+      // 绑定第一次创建的那个媒体项，后面写进去的新歌名根本不显示。
+      const assetId = snapshot.assetId.length > 0 ? snapshot.assetId : `mf-${title}|${artist}`;
+      console.info(TAG,
+        `setAVMetadata: rev=${revision}, final=${title}, assetId=${assetId}, hasArtwork=${snapshot.artwork !== undefined}`);
       let metadata: avSession.AVMetadata = {
-        assetId: `${id}`,
+        assetId: assetId,
         title: title,
         artist: artist,
         mediaImage: mediaImage,
         duration: duration
       };
       let fallback: avSession.AVMetadata = {
-        assetId: `${id}`,
+        assetId: assetId,
         title: title,
         artist: artist,
         mediaImage: "",
         duration: duration
       };
-      if (this.session) {
-        this.session.setAVMetadata(metadata).then(() => {
-          console.info(TAG, 'SetAVMetadata successfully');
-        }).catch((err: BusinessError) => {
-          console.error(TAG, `SetAVMetadata BusinessError: code: ${err.code}, message: ${err.message}`);
+      // 全局串行：异步写入和失败后的 fallback 都不能乱序覆盖更新的曲目。
+      snapshot.writeChain = snapshot.writeChain.then(async () => {
+        if (mfMetadata().revision !== revision) {
+          return;
+        }
+        try {
+          await session.setAVMetadata(metadata);
+          console.info(TAG, `SetAVMetadata successfully rev=${revision}`);
+          // 只写元数据时，系统面板（尤其锁屏 / 息屏后）可能仍渲染旧卡片：
+          // 会话被系统降级后会静默接受 setAVMetadata，但 UI 不刷新。重新
+          // activate 即可让它成为前台会话。播放状态不要在这里补推 —— 切歌
+          // 瞬间 AVPlayer 还在 idle/preparing，带 position/speed 的 state 会
+          // 被 native 判 401「state not valid」，反而让卡片短暂停在旧歌；
+          // stateCall/play/pause/seek 本来就会在真正开始播放时上报。
+          try {
+            await session.activate();
+          } catch (stateError) {
+            console.error(TAG, `refresh panel state failed: ${JSON.stringify(stateError)}`);
+          }
+        } catch (error) {
+          if (mfMetadata().revision !== revision) {
+            return;
+          }
+          console.error(TAG, `SetAVMetadata failed rev=${revision}: ${JSON.stringify(error)}`);
           // 图片被系统拒绝时再退一次不带封面的版本，至少让歌名/歌手/时长
           // 出现在锁屏面板上，而不是整个 setAVMetadata 都失败。
-          if (this.session) {
-            this.session.setAVMetadata(fallback).catch((retryErr: BusinessError) => {
-              console.error(TAG,
-                `SetAVMetadata fallback error: code: ${retryErr.code}, message: ${retryErr.message}`);
-            });
+          try {
+            await session.setAVMetadata(fallback);
+          } catch (retryError) {
+            console.error(TAG, `SetAVMetadata fallback failed: ${JSON.stringify(retryError)}`);
           }
-        });
-      }
+        }
+      });
     } catch (error) {
-      console.error(TAG,
-        `SetAVMetadata try: code: ${(error as BusinessError).code},message: ${(error as BusinessError).message}`);
+      console.error(TAG, `setAVMetadata prepare failed: ${JSON.stringify(error)}`);
     }
   }
 
@@ -730,11 +956,18 @@ export class MediaAvPlayer {
   }
 
   async createSession() {
-    if (!this.context) {
+    if (!this.context || this.session) {
       return;
     }
-    this.session = await avSession.createAVSession(this.context, 'SESSION_NAME', 'audio');
-    this.session.activate();
+    try {
+      // 全局共享一个 AVSession：每个新实例都 createAVSession 时，系统里会
+      // 留下多个会话 / 多个命令回调，锁屏可能一直显示最老那张卡片的歌名。
+      this.session = await mfSharedSession(this.context);
+    } catch (error) {
+      console.error(TAG, `createSession failed: ${JSON.stringify(error)}`);
+      return;
+    }
+    // 会话可能晚于 Dart 的第一次 setMetadata 才就绪，这里用全局快照补写一次。
     this.setAVMetadata();
     let wantAgentInfo: wantAgent.WantAgentInfo = {
       wants: [

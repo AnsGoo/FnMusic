@@ -7,15 +7,20 @@ PODS:
   - device_info_plus (0.0.1):
     - FlutterMacOS
   - FlutterMacOS (1.0.0)
+  - FMDB (2.7.12):
+    - FMDB/standard (= 2.7.12)
+  - FMDB/Core (2.7.12)
+  - FMDB/standard (2.7.12):
+    - FMDB/Core
   - just_audio (0.0.1):
     - Flutter
     - FlutterMacOS
   - shared_preferences_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
-  - sqflite_darwin (0.0.4):
-    - Flutter
+  - sqflite (0.0.2):
     - FlutterMacOS
+    - FMDB (>= 2.7.5)
 
 DEPENDENCIES:
   - audio_service (from `Flutter/ephemeral/.symlinks/plugins/audio_service/darwin`)
@@ -24,7 +29,11 @@ DEPENDENCIES:
   - FlutterMacOS (from `Flutter/ephemeral`)
   - just_audio (from `Flutter/ephemeral/.symlinks/plugins/just_audio/darwin`)
   - shared_preferences_foundation (from `Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin`)
-  - sqflite_darwin (from `Flutter/ephemeral/.symlinks/plugins/sqflite_darwin/darwin`)
+  - sqflite (from `Flutter/ephemeral/.symlinks/plugins/sqflite/macos`)
+
+SPEC REPOS:
+  trunk:
+    - FMDB
 
 EXTERNAL SOURCES:
   audio_service:
@@ -39,17 +48,18 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/just_audio/darwin
   shared_preferences_foundation:
     :path: Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin
-  sqflite_darwin:
-    :path: Flutter/ephemeral/.symlinks/plugins/sqflite_darwin/darwin
+  sqflite:
+    :path: Flutter/ephemeral/.symlinks/plugins/sqflite/macos
 
 SPEC CHECKSUMS:
   audio_service: aa99a6ba2ae7565996015322b0bb024e1d25c6fd
   audio_session: eaca2512cf2b39212d724f35d11f46180ad3a33e
   device_info_plus: b0fafc687fb901e2af612763340f1b0d4352f8e5
   FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
+  FMDB: 728731dd336af3936ce00f91d9d8495f5718a0e6
   just_audio: 4e391f57b79cad2b0674030a00453ca5ce817eed
   shared_preferences_foundation: 7036424c3d8ec98dfe75ff1667cb0cd531ec82bb
-  sqflite_darwin: 20b2a3a3b70e43edae938624ce550a3cbf66a3d0
+  sqflite: c73556b2499b92f0b6e6946abe4a4084510cdf90
 
 PODFILE CHECKSUM: 1e95c36afbfd1cb6423ceca4de7a8e1b256fb6ac
 

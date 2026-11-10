@@ -14,6 +14,7 @@ import 'package:just_audio/just_audio.dart';
 import '../data/fn_connect.dart';
 import 'background_task.dart';
 import 'stream_probe.dart';
+import 'ohos_media_control.dart';
 import 'system_artwork.dart';
 
 class PlaybackState {
@@ -93,6 +94,12 @@ class MfPlayer {
   final List<StreamSubscription<dynamic>> _subs = [];
   VoidCallback? onCompleted;
 
+  /// 鸿蒙锁屏 / 媒体面板的「上一首 / 下一首」最终落到这里，由队列所有者
+  /// (AppModel) 注入。注册平台通道需要 WidgetsBinding，所以放在第一次真正
+  /// 播放时的 [_bind] 里，纯 Dart 测试构造 AppModel 不会碰到它。
+  Future<void> Function()? onSystemNext;
+  Future<void> Function()? onSystemPrevious;
+
   /// Fires when a track cannot be played: (trackId, human readable reason).
   /// The queue owner uses it to explain the failure and move on.
   void Function(String trackId, String reason)? onFailed;
@@ -126,6 +133,23 @@ class MfPlayer {
   /// Bumped on every play/stop: a slow cover download for the previous track
   /// must not overwrite the new track's lock-screen metadata.
   int _metadataGeneration = 0;
+
+  /// 最近一次完整下发给系统面板的曲目信息（含已下载封面）。鸿蒙 AVSession 是
+  /// 异步创建的，第一次 setMetadata 可能赶在会话就绪之前；播放真正开始后
+  /// 再补推一次，锁屏就一定与 App 内一致。
+  Map<String, dynamic>? _systemPayload;
+  bool _systemMetadataConfirmed = false;
+
+  /// 鸿蒙没有 audio_service：AVSession 的切歌命令由 ohos 插件转发到 Dart。
+  /// 队列回调由 AppModel 注入；没有注入时（例如直接使用 MfPlayer 的测试）
+  /// 不注册通道，避免在 binding 未初始化的环境里断言。
+  void _ensureSystemControlBind() {
+    final onNext = onSystemNext;
+    final onPrevious = onSystemPrevious;
+    if (onNext != null && onPrevious != null) {
+      MfOhosMediaControl.bind(onNext: onNext, onPrevious: onPrevious);
+    }
+  }
 
   void _bind() {
     final player = _player;
@@ -161,6 +185,12 @@ class MfPlayer {
         // 鸿蒙的长时任务要在真的出声之后才申请：系统会校验 AVSession 是否
         // 处于播放态，提前申请会被判成「没有在放音频」而拒掉。
         if (playing) unawaited(BackgroundAudioTask.ensureRunning());
+        // 会话此刻一定已激活，补推一次当前曲目，纠正首次推送早于会话创建的
+        // 时序问题（其它平台会抛 MissingPluginException，静默忽略）。
+        if (playing && !_systemMetadataConfirmed) {
+          _systemMetadataConfirmed = true;
+          unawaited(_repushSystemMetadata(_metadataGeneration));
+        }
         if (finished) onCompleted?.call();
       }),
     );
@@ -247,14 +277,18 @@ class MfPlayer {
     String? coverUrl,
     Duration? duration,
     bool transcoded = false,
-  }) async {
+  }  ) async {
     if (_subs.isEmpty) _bind();
+    // 每次开播都重新绑定：Flutter 引擎热重启 / 通道重建后，只在第一次绑定
+    // 的 handler 会失效，原生转发过来的锁屏命令就全部石沉大海。
+    _ensureSystemControlBind();
     _reportedFailure = null;
     _probedTrackId = null;
     _probeResult = null;
     _currentUrl = streamUrl;
     _stopClock();
     final generation = ++_metadataGeneration;
+    _systemMetadataConfirmed = false;
     state.value = PlaybackState(
       trackId: trackId,
       title: title,
@@ -265,6 +299,14 @@ class MfPlayer {
       duration: duration ?? Duration.zero,
     );
     if (transcoded) _startClock();
+    // 锁屏面板必须在点击后立刻反馈：鸿蒙的 setUrl 会等 AVPlayer prepare，
+    // 慢的时候要 6 秒，等它返回再推元数据会让「下一首」看起来毫无反应。
+    // duration 随这次一起下发（转码流 chunked 在系统播放器侧拿不到时长，
+    // 缺了它锁屏面板的开始/结束时间会显示 "--"）；封面则由该方法异步补推，
+    // 不阻塞音频加载。
+    unawaited(_pushSystemMetadata(
+      title, artist, coverUrl, duration, generation, trackId,
+    ));
     try {
       // Feiniu relay endpoints (Fn Connect) expect their cookie on audio
       // requests too; other servers never see it.
@@ -273,10 +315,6 @@ class MfPlayer {
         headers: fnRelayHeadersFor(streamUrl),
       );
       await _player.setVolume(_volume);
-      // 鸿蒙锁屏播控面板的内容：加载成功后把曲目信息推给 AVSession。
-      // duration 必须带上：转码流（chunked）在系统播放器侧拿不到时长，
-      // 缺了它锁屏面板的开始/结束时间会显示 "--"。
-      unawaited(_pushSystemMetadata(title, artist, coverUrl, duration, generation));
       unawaited(_player.play());
       return true;
     } on PlayerInterruptedException {
@@ -305,19 +343,24 @@ class MfPlayer {
     String? coverUrl,
     Duration? duration,
     int generation,
+    String trackId,
   ) async {
     final payload = <String, dynamic>{
       'title': title,
       'artist': artist ?? '',
       'artUri': coverUrl ?? '',
       'durationMs': duration?.inMilliseconds ?? 0,
+      // 稳定曲目标识：同一首歌的多次推送共用一个 AVSession assetId。
+      'trackId': trackId,
     };
+    if (generation == _metadataGeneration) _systemPayload = payload;
     try {
       // 第一次调用兼作能力探测：其它平台没有这个 handler，直接抛
       // MissingPluginException，后面就没必要下载封面了。
       await _justAudioMain.invokeMethod('setMetadata', payload);
     } catch (_) {
       // 平台不支持：Android/iOS 走各自的 media_session/notification 通道。
+      _systemPayload = null;
       return;
     }
     // 能走到这里就说明对端是鸿蒙的 vendored 插件（唯一实现 setMetadata 的
@@ -326,14 +369,28 @@ class MfPlayer {
     final bytes = await _artwork.load(coverUrl);
     // 下载期间用户可能已经切歌，迟到的封面不能盖到新歌上。
     if (bytes == null || generation != _metadataGeneration) return;
+    final withArtwork = <String, dynamic>{
+      ...payload,
+      // StandardMessageCodec：Uint8List → ArkTS Uint8Array / ArrayBuffer。
+      'artwork': bytes,
+    };
+    if (generation == _metadataGeneration) _systemPayload = withArtwork;
     try {
-      await _justAudioMain.invokeMethod('setMetadata', <String, dynamic>{
-        ...payload,
-        // StandardMessageCodec：Uint8List → ArkTS Uint8Array / ArrayBuffer。
-        'artwork': bytes,
-      });
+      await _justAudioMain.invokeMethod('setMetadata', withArtwork);
     } catch (_) {
       // 封面补推失败不影响播放，歌名/时长第一次调用时已生效。
+    }
+  }
+
+  /// 播放真正开始后补推一次。鸿蒙的 AVSession 由插件异步创建，会话就绪前
+  /// 到达的 setMetadata 只更新了原生侧快照，系统面板可能还停在上一首。
+  Future<void> _repushSystemMetadata(int generation) async {
+    final payload = _systemPayload;
+    if (payload == null || generation != _metadataGeneration) return;
+    try {
+      await _justAudioMain.invokeMethod('setMetadata', payload);
+    } catch (_) {
+      // 平台不支持或会话临时不可用：音频播放本身不受影响。
     }
   }
 
@@ -394,6 +451,8 @@ class MfPlayer {
   Future<void> stop() async {
     _stopClock();
     _metadataGeneration++;
+    _systemPayload = null;
+    _systemMetadataConfirmed = false;
     await _engine?.stop();
     state.value = const PlaybackState();
     // Nothing is loaded any more, so the HarmonyOS long-running task would just
