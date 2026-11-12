@@ -128,6 +128,11 @@ class AppModel extends ChangeNotifier {
       onNext: next,
       onPrevious: previous,
     );
+    // 鸿蒙没有 audio_service：AVSession 的切歌命令由 vendored just_audio 的
+    // ohos 分支转发回播放器，再落到同一个队列方法，只有一份真理来源。
+    // 通道在 MfPlayer 第一次播放时才注册（那时 WidgetsBinding 已就绪）。
+    this.player.onSystemNext = () => systemSkip(1);
+    this.player.onSystemPrevious = () => systemSkip(-1);
   }
 
   final MusicFreeClient client;
@@ -262,6 +267,16 @@ class AppModel extends ChangeNotifier {
   /// could not hand them over. Reset as soon as something plays.
   int _failedSkips = 0;
   static const _maxFailedSkips = 6;
+
+  /// 系统媒体面板（鸿蒙锁屏 / 耳机）的切歌命令串行化。锁屏上连点会瞬间发来
+  /// 多条消息，若每条都立刻 `setUrl`，后面的加载会打断前面的，实测 6 次连点
+  /// 只有前 2 次真正换歌。这里把重入期间的步数累加，由第一次调用一次性跳到
+  /// 目标曲目，只做一次加载。
+  bool _systemSwitching = false;
+  int _pendingSystemSteps = 0;
+  DateTime? _systemSwitchStarted;
+  /// 某次 setUrl 卡住（弱网 / 锁屏后台）时，重入锁不能把按钮永久锁死。
+  static const Duration _systemSwitchTimeout = Duration(seconds: 12);
 
   // ---- Getters ------------------------------------------------------------
 
@@ -1786,6 +1801,55 @@ class AppModel extends ChangeNotifier {
     _queueIndex -= 1;
     _failedSkips = 0;
     await _startTrack(_queue[_queueIndex]);
+  }
+
+  /// 锁屏 / 媒体面板的「上一首 / 下一首」，只由鸿蒙 AVSession 转发通道调用。
+  ///
+  /// 与 [next] / [previous] 有意不同：
+  /// - **到末尾会循环**：系统面板的按钮不该因为队列走到尽头就毫无反应
+  ///   （实测用户连点 6 次，前 2 次切歌、后 4 次被 `next()` 静默 return）。
+  /// - **连点合并**：重入期间累加步数，一次加载直接跳到目标曲目，避免多个
+  ///   `setUrl` 并发互相打断。
+  ///
+  /// 自动续播 [_handleCompleted] 仍走 [next]，所以播完最后一首照常停止，
+  /// 不会因为这里循环而无限播放。
+  Future<void> systemSkip(int delta) async {
+    if (_queue.isEmpty) return;
+    _pendingSystemSteps += delta;
+    final now = DateTime.now();
+    if (_systemSwitching) {
+      final started = _systemSwitchStarted;
+      if (started != null && now.difference(started) < _systemSwitchTimeout) {
+        debugPrint('MF systemSkip: merged delta=$delta pending=$_pendingSystemSteps');
+        return;
+      }
+      // 上一次加载超过 12 秒仍未回来（弱网 / 后台被挂起）：强制解锁，
+      // 否则之后每一次点击都会被静默吞掉，表现为「一直停在某一首」。
+      debugPrint('MF systemSkip: watchdog released stuck switch');
+      _systemSwitching = false;
+    }
+    _systemSwitching = true;
+    _systemSwitchStarted = now;
+    debugPrint('MF systemSkip: start delta=$delta queue=${_queue.length} index=$_queueIndex');
+    try {
+      while (_pendingSystemSteps != 0) {
+        final steps = _pendingSystemSteps;
+        _pendingSystemSteps = 0;
+        final length = _queue.length;
+        var target = (_queueIndex + steps) % length;
+        if (target < 0) target += length;
+        // 步数正好是队列长度的整数倍时回到原曲：仍重启一次，保证按钮有反馈。
+        _queueIndex = target;
+        _failedSkips = 0;
+        debugPrint('MF systemSkip: jump to index=$_queueIndex steps=$steps');
+        await _startTrack(_queue[_queueIndex]);
+      }
+    } catch (error) {
+      debugPrint('MF systemSkip: failed: $error');
+    } finally {
+      _systemSwitching = false;
+      _systemSwitchStarted = null;
+    }
   }
 
   void togglePlay() {

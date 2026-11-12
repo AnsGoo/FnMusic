@@ -20,8 +20,15 @@
  * SOFTWARE.
  * */
 
-import { BinaryMessenger, MethodCall, MethodCallHandler, MethodResult } from '@ohos/flutter_ohos';
+import {
+  BinaryMessenger,
+  MethodCall,
+  MethodCallHandler,
+  MethodChannel,
+  MethodResult
+} from '@ohos/flutter_ohos';
 import { AudioPlayer } from './AudioPlayer'
+import { MfMediaCommandForwarder, MF_MEDIA_COMMAND_KEY, mfApplySystemMetadata } from './MediaAvPlayer'
 
 const TAG = 'MediaAvPlayer';
 
@@ -29,11 +36,33 @@ export class MainMethodCallHandler implements MethodCallHandler {
   private applicationContext: Context;
   private messenger: BinaryMessenger;
   private players: Map<string, AudioPlayer> = new Map<string, AudioPlayer>();
+  /// 反向通道：把鸿蒙 AVSession 的切歌命令从原生送回 Dart（队列在 AppModel）。
+  private controlChannel: MethodChannel;
 
   constructor(applicationContext: Context,
     messenger: BinaryMessenger) {
     this.applicationContext = applicationContext;
     this.messenger = messenger;
+    this.controlChannel = new MethodChannel(messenger, 'com.seasonyuu.musicfly/media_control');
+    this.registerForwarder();
+  }
+
+  /// AppStorage 是进程级全局：模块级变量在 ArkTS 打包后会被拆成多份，只有它
+  /// 能让 MainMethodCallHandler 与 MediaAvPlayer 看到同一个转发器。
+  /// 每次 init 都刷新一次 —— disposeAllPlayers 之后若 messenger 换了，旧的
+  /// forwarder 仍会把命令发到已失效的通道，锁屏按钮就永久失灵。
+  private registerForwarder(): void {
+    AppStorage.setOrCreate(MF_MEDIA_COMMAND_KEY, new MfMediaCommandForwarder(
+      (command: string): boolean => {
+        console.info(TAG, `forward media control '${command}' to Dart`);
+        // invokeMethod 在这个 SDK 里是 void + 可选 callback，直接发即可。
+        this.controlChannel.invokeMethod(command, new Map<String, Object>());
+        // App 侧一定注册了 handler；返回 true 阻止原生再用只有 1 首的
+        // songList 去切歌（那会重播当前曲或什么都不做）。
+        return true;
+      }
+    ));
+    console.info(TAG, 'media control forwarder registered');
   }
 
   onMethodCall(call: MethodCall, result: MethodResult): void {
@@ -45,6 +74,8 @@ export class MainMethodCallHandler implements MethodCallHandler {
           break;
         }
         if (this.applicationContext && this.messenger) {
+          // 通道可能随引擎重建而更换，重新把转发器指向当前 messenger。
+          this.registerForwarder();
           this.players.set(id, new AudioPlayer(this.messenger, id));
         }
         result.success(null);
@@ -70,16 +101,29 @@ export class MainMethodCallHandler implements MethodCallHandler {
         // StandardMessageCodec 会把它解成 Uint8Array 或 ArrayBuffer，都要接住。
         const rawArtwork: Object | undefined = call.argument("artwork");
         const artwork = this.artworkBytes(rawArtwork);
-        console.info(TAG, `setMetadata from Dart: title=${call.argument("title")}, artist=${call.argument("artist")}, artUri=${call.argument("artUri")}, durationMs=${call.argument("durationMs")}, artworkBytes=${artwork ? artwork.length : 0}`);
-        this.players.forEach(player => {
-          player.setSessionMetadata(
-            call.argument("title"),
-            call.argument("artist"),
-            call.argument("artUri"),
-            call.argument("durationMs"),
-            artwork,
-          );
-        });
+        // 只写当前活跃实例。遍历 players 时若命中已释放的旧实例，元数据会写
+        // 进旧 AVSession —— 锁屏就一直停在那一首（B），而 App 内已经放到 A。
+        const applied = mfApplySystemMetadata(
+          call.argument("title"),
+          call.argument("artist"),
+          call.argument("artUri"),
+          call.argument("durationMs"),
+          artwork,
+          call.argument("trackId"),
+        );
+        if (!applied) {
+          this.players.forEach(player => {
+            player.setSessionMetadata(
+              call.argument("title"),
+              call.argument("artist"),
+              call.argument("artUri"),
+              call.argument("durationMs"),
+              artwork,
+              call.argument("trackId"),
+            );
+          });
+        }
+        console.info(TAG, `setMetadata from Dart: title=${call.argument("title")}, artworkBytes=${artwork ? artwork.length : 0}, applied=${applied}`);
         result.success(new Map<String, Object>());
         break;
       }
@@ -101,6 +145,9 @@ export class MainMethodCallHandler implements MethodCallHandler {
   }
 
   dispose() {
+    // 不清 AppStorage：引擎热重启时新构造的 forwarder 会覆盖它，清掉反而
+    // 可能让仍在运行的 AVSession 回调失去转发能力。
+    console.info(TAG, 'media control forwarder disposed');
     this.players.forEach(player => {
       player.dispose();
     });

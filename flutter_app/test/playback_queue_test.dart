@@ -104,4 +104,47 @@ void main() {
     expect(model.error, isNull);
     model.dispose();
   });
+
+  // The HarmonyOS lock-screen panel forwards AVSession commands to these
+  // methods. next()/previous() deliberately stop at the queue edge; the
+  // system panel must still respond (wrap around) instead of silently doing
+  // nothing — that was reported as "lock-screen next does not work".
+  test('ohos system next wraps at the end of the queue', () async {
+    final player = _FakePlayer(healthy: true);
+    final model = build(player);
+
+    await model.playFrom(queue(3), 2);
+    await model.systemSkip(1);
+
+    expect(model.queueIndex, 0);
+    expect(player.attempted, ['曲目3', '曲目1']);
+    model.dispose();
+  });
+
+  test('ohos system previous wraps to the last track', () async {
+    final player = _FakePlayer(healthy: true);
+    final model = build(player);
+
+    await model.playFrom(queue(3), 0);
+    await model.systemSkip(-1);
+
+    expect(model.queueIndex, 2);
+    expect(player.attempted, ['曲目1', '曲目3']);
+    model.dispose();
+  });
+
+  test('ohos system skip coalesces rapid lock-screen taps', () async {
+    final player = _FakePlayer(healthy: true);
+    final model = build(player);
+
+    await model.playFrom(queue(3), 0);
+    final taps = [for (var i = 0; i < 4; i++) model.systemSkip(1)];
+    await Future.wait(taps);
+
+    // Net four steps around a three-track queue lands on index 1, and the
+    // burst must not spawn four concurrent setUrl loads.
+    expect(model.queueIndex, 1);
+    expect(player.attempted.length, lessThanOrEqualTo(3));
+    model.dispose();
+  });
 }

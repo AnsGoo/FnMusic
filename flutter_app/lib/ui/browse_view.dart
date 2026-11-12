@@ -313,7 +313,10 @@ class _Body extends StatelessWidget {
         maxCrossAxisExtent: wide ? 196 : 118,
         mainAxisSpacing: 20,
         crossAxisSpacing: 18,
-        childAspectRatio: 0.74,
+        // Tuned together with _GridCard's Expanded artwork so the cover stays
+        // near-square on both narrow and wide layouts while the two text lines
+        // always fit inside the cell.
+        childAspectRatio: wide ? 0.80 : 0.70,
       ),
       itemCount: albums.length,
       itemBuilder: (context, index) {
@@ -350,7 +353,10 @@ class _Body extends StatelessWidget {
         maxCrossAxisExtent: wide ? 196 : 118,
         mainAxisSpacing: 20,
         crossAxisSpacing: 18,
-        childAspectRatio: 0.74,
+        // Tuned together with _GridCard's Expanded artwork so the cover stays
+        // near-square on both narrow and wide layouts while the two text lines
+        // always fit inside the cell.
+        childAspectRatio: wide ? 0.80 : 0.70,
       ),
       itemCount: playlists.length,
       itemBuilder: (context, index) {
@@ -461,8 +467,12 @@ class _GridCardState extends State<_GridCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            AspectRatio(
-              aspectRatio: 1,
+            // Grid cells have a fixed height (childAspectRatio). A square
+            // AspectRatio + two text lines overflows it when font metrics are
+            // taller than the design baseline (12 px on the HarmonyOS emulator,
+            // which draws Flutter's yellow overflow banner). Let the artwork
+            // absorb the leftover height so the text always fits.
+            Expanded(
               child: Stack(
                 fit: StackFit.expand,
                 children: [
