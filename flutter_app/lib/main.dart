@@ -69,6 +69,11 @@ class _RootPageState extends State<_RootPage> {
       page = const ColoredBox(color: Mf.bg);
     } else if (!model.signedIn) {
       page = const LoginPage();
+    } else if (model.reloginRequired) {
+      // The saved session could not be revived (every link down or the token
+      // expired). Still signed in internally, so a background sweep can send
+      // the user straight back to the library if the network recovers.
+      page = LoginPage(notice: model.reloginReason);
     } else {
       page = const HomeShell();
     }

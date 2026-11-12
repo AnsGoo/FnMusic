@@ -25,7 +25,11 @@ import 'theme.dart';
 enum _LoginMode { direct, fnConnect }
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  const LoginPage({super.key, this.notice});
+
+  /// Shown at the top of the form when a saved session could not be revived
+  /// automatically (all links down / credentials expired).
+  final String? notice;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -55,6 +59,21 @@ class _LoginPageState extends State<LoginPage> {
   String? _rememberedNasUser;
 
   _LoginMode _mode = _LoginMode.direct;
+  bool _modePicked = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_modePicked) return;
+    _modePicked = true;
+    // A FNID session that needs re-authentication should land on the FNID
+    // tab with its ID / NAS account already prefilled, not on the plain URL
+    // form.
+    if (widget.notice != null &&
+        context.read<AppModel>().session?.fnConnect == true) {
+      _mode = _LoginMode.fnConnect;
+    }
+  }
 
   @override
   void initState() {
@@ -177,6 +196,24 @@ class _LoginPageState extends State<LoginPage> {
     final List<Widget> form = [
       _tabs(),
       const SizedBox(height: 14),
+      if (widget.notice != null) ...[
+        Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Mf.accentWash,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            '${widget.notice}\n后台仍在自动探测连接，恢复后会自动返回。',
+            style: const TextStyle(
+              color: Mf.accentHover,
+              fontSize: 12,
+              height: 1.5,
+            ),
+          ),
+        ),
+      ],
       if (_mode == _LoginMode.direct) ..._directForm(model),
       if (_mode == _LoginMode.fnConnect) ..._fnConnectForm(model),
       if (model.error != null) ...[

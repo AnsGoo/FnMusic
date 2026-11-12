@@ -270,6 +270,7 @@ class ServerInfo {
     this.serverVersion,
     this.subsonicVersion,
     this.openSubsonic = false,
+    this.authRequired = false,
   });
 
   final bool online;
@@ -278,6 +279,13 @@ class ServerInfo {
   final String? serverVersion;
   final String? subsonicVersion;
   final bool openSubsonic;
+
+  /// The endpoint answered but rejected our credentials (401 / Subsonic
+  /// code 40-41). That is *not* an unreachable address: probing other links
+  /// cannot fix it, only a fresh sign-in can. Keeping the two cases apart is
+  /// what lets an expired day-old JWT go straight to re-login instead of
+  /// being retried as a dead network forever.
+  final bool authRequired;
 }
 
 class LyricLine {

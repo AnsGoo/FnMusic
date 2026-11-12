@@ -27,7 +27,8 @@
   - iOS 后台播放除了 `UIBackgroundModes: audio`，还必须在启动时把 AVAudioSession 配成 playback（`lib/audio/system_audio.dart` 用 audio_session 的 `AudioSessionConfiguration.music()`），否则切后台即静音、锁屏不出 Now Playing。
   - 鸿蒙构建会把 `audio_session` override 到 pub.dev 0.2.4（无 ohos 实现），所以 `configureSystemAudio()` 必须 try/catch，鸿蒙上必然抛 MissingPluginException。
 
-- FNID 登录的 LAN/WAN 故障切换：session.addresses 必须保存飞牛返回的**全部**候选链路（含当前网络下不可达的外网/网关/中继），不能只存当次 `reachable`；`MusicFreeClient.onTransportFailure` → AppModel 立即 `_probeAddresses()`（10s 节流、2 分钟周期兜底）实现离开内网秒级切换。网关/中继地址需要 fnOS token，登录页「外网自动切换（可选）」可预热；已加载的播放流不会随地址切换重连。
+- FNID 登录的 LAN/WAN 故障切换：session.addresses 必须保存飞牛返回的**全部**候选链路（含当前网络下不可达的外网/网关/中继），不能只存当次 `reachable`；网关/中继地址需要 fnOS token，登录页「外网自动切换（可选）」可预热；已加载的播放流不会随地址切换重连。
+- 连接恢复状态机（2026-11-12 重构，`lib/state/app_model.dart` + `lib/data/musicfree_client.dart`）：2 分钟常规探测 + 全离线时 3/5/10/20/30s 退避循环探测；连续 3 轮全不可达 → `reloginRequired` 把用户带到登录页（后台仍探测，网络恢复自动清除并回到首页）。`onTransportFailure` / `onAuthFailure` 是 `Future<bool> Function()` **可等待**回调，client 在探测/静默重登成功后**重放一次请求**（`_get` 的 URI 必须在闭包内构造，否则重放仍打到旧地址）。`ServerInfo.authRequired` 区分「链路通但凭据失效」与「链路不通」——一天后 JWT 过期被 ping 误判成全地址不可达、而 `_recoverFnConnect` 只刷 fnOS token 不换 Music Free token，是老版本一直连不上、只能手动重登的根因。`_reloginSilently()` 只对 `/app/` 网关链路用 `gatewayLogin(anonymous: true)` 免密换新 token；普通登录没存 app 密码，只能回登录页。`_post` 一律 `retryable: false`，登录失败不触发故障切换。
 - **用户约定：FNID 地址池是内部实现，绝不暴露给用户**。`MusicFreeSession.fnConnect` 标记区分两种登录；FNID 在设置页只显示一条只读「当前连接」，不显示备用地址、不能增删改（`AppModel.addressesManaged` 拦截），只有普通登录才允许手动备用地址。旧会话靠 `looksLikeFnAddressPool()` 推断（`/app/` 网关链路 + 裸 IP 直连混合）。探测/切换仍走完整 `allAddresses`。
 
 ## 遗留事项

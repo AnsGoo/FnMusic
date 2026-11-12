@@ -20,6 +20,11 @@ import '../data/musicfree_client.dart';
 import '../data/session_store.dart';
 import 'cast_audio_session.dart';
 
+/// Outcome of one sweep over every address in the pool. [authExpired] is
+/// deliberately separate from [unreachable]: a dead JWT is not a dead link,
+/// and treating it as one is what made day-old sessions loop forever.
+enum _ProbeOutcome { reachable, authExpired, unreachable }
+
 enum Section { home, tracks, albums, artists, playlists, favorites }
 
 extension SectionInfo on Section {
@@ -112,7 +117,10 @@ class AppModel extends ChangeNotifier {
     this.player.onFailed = _handleFailure;
     // A transport failure (leaving the LAN, NAS asleep) must re-probe the FNID
     // address pool right away instead of waiting for the slow periodic sweep.
+    // Both callbacks are awaited by the client, which replays the failed
+    // request once a working endpoint / fresh session is in place.
     this.client.onTransportFailure = _onTransportFailure;
+    this.client.onAuthFailure = _onAuthFailure;
     // Lock screen / headset buttons drive the same queue as the in-app
     // transport, so there is only ever one source of truth for "next".
     MfMediaSession.instance?.bind(
@@ -138,19 +146,44 @@ class AppModel extends ChangeNotifier {
 
   // ---- Multi-address failover (LAN preferred) ------------------------------
 
-  /// Periodic reachability probe across all configured server addresses.
+  /// Relaxed steady-state sweep (2 min). A fast backoff loop takes over while
+  /// every link is down, so an outage is noticed in seconds, not minutes.
   Timer? _addressTimer;
   Map<String, ServerInfo> _addressStatuses = {};
-  bool _probingAddresses = false;
+
+  /// Concurrent failures all await one sweep instead of each starting one.
+  Future<_ProbeOutcome>? _probeInFlight;
+
+  /// Fast retry loop, active only while the whole pool is offline.
+  Timer? _offlineTimer;
+  int _offlineStreak = 0;
+  static const _offlineBackoff = <Duration>[
+    Duration(seconds: 3),
+    Duration(seconds: 5),
+    Duration(seconds: 10),
+    Duration(seconds: 20),
+    Duration(seconds: 30),
+  ];
+
+  /// How many consecutive all-offline sweeps before we stop probing silently
+  /// and present the login page. Three rounds (~18 s) is enough to ride out a
+  /// Wi-Fi handover without leaving the user stuck for another 2 minutes.
+  static const _reloginAfterFailures = 3;
+
+  /// One recovery per burst of failing requests; every waiter replays its own
+  /// request if it succeeded.
+  Future<bool>? _recoveryInFlight;
+
+  bool _reloginRequired = false;
+  String? _reloginReason;
+  bool _relogining = false;
+  DateTime? _lastReloginAttempt;
+  static const _reloginCooldown = Duration(seconds: 30);
 
   /// Every link the FNID broker reported (LAN / public IP / gateway / relay),
   /// including the ones unreachable from the current network. Persisted into
   /// the session at sign-in so the prober can hop when the network changes.
   List<Uri> _fnAddressPool = const [];
-
-  /// A burst of failing requests must not start a dozen concurrent sweeps.
-  DateTime? _lastFailureProbe;
-  static const _failureProbeCooldown = Duration(seconds: 10);
 
   /// Re-establishing the fnOS session (to refresh the gateway / relay tokens)
   /// is itself rate-limited so a prolonged outage does not hammer the NAS.
@@ -323,6 +356,18 @@ class AppModel extends ChangeNotifier {
 
   bool get signedIn => _session != null;
 
+  /// Every address stayed unreachable (or the session expired) and no silent
+  /// recovery worked. The root page shows the sign-in gate with [reloginReason].
+  /// A later sweep that finds a live link clears this automatically.
+  bool get reloginRequired => _reloginRequired;
+  String? get reloginReason => _reloginReason;
+
+  /// Test hook: force one sweep without waiting for a timer tick.
+  @visibleForTesting
+  Future<void> probeAddressesNow() async {
+    await _probeAddresses();
+  }
+
   /// True until the saved session has been read, so the first frame does not
   /// flash the login page at a returning user.
   bool get booting => _booting;
@@ -468,6 +513,9 @@ class AppModel extends ChangeNotifier {
     _homeSearch = const SearchAll.empty();
     _serverInfo = null;
     _fnAddressPool = const [];
+    _reloginRequired = false;
+    _reloginReason = null;
+    _offlineStreak = 0;
     _stopAddressProbe();
     notifyListeners();
   }
@@ -850,15 +898,16 @@ class AppModel extends ChangeNotifier {
 
   // ---- Multi-address failover ----------------------------------------------
 
-  /// Probes every configured address on a relaxed cycle and promotes the best
-  /// reachable one. Among reachable addresses the lowest latency wins, which
-  /// effectively prefers the LAN endpoint whenever both LAN and WAN are up
-  /// (a LAN round trip is always far quicker than a WAN one). Transport
-  /// failures additionally trigger an immediate sweep via
-  /// [_onTransportFailure], so a network change is noticed in seconds rather
-  /// than at the next tick.
+  /// Steady-state sweep. Failed requests and all-offline results additionally
+  /// start a fast backoff loop ([_noteOffline]) on top of this relaxed timer,
+  /// so a network change is noticed in seconds rather than at the next tick.
   void _startAddressProbe() {
     _addressTimer?.cancel();
+    _offlineTimer?.cancel();
+    _offlineTimer = null;
+    _offlineStreak = 0;
+    _reloginRequired = false;
+    _reloginReason = null;
     if (_session == null) return;
     unawaited(_probeAddresses());
     _addressTimer = Timer.periodic(const Duration(minutes: 2), (_) {
@@ -866,22 +915,131 @@ class AppModel extends ChangeNotifier {
     });
   }
 
-  /// A failed request means the active address may just have gone away (the
-  /// phone left the LAN, the NAS fell asleep, a gateway token expired).
-  /// Re-probe at once; throttled so a burst of failures cannot pile up
-  /// concurrent sweeps. Sessions with a single address have nothing to hop to.
-  void _onTransportFailure() {
+  /// [MusicFreeClient] awaits this before replaying a failed request. All
+  /// requests failing in the same burst share one recovery, so a dozen
+  /// parallel list loads cannot start a dozen concurrent sweeps.
+  Future<bool> _onTransportFailure() {
+    final running = _recoveryInFlight;
+    if (running != null) return running;
+    final future = _recoverAfterFailure();
+    _recoveryInFlight = future;
+    return future.whenComplete(() => _recoveryInFlight = null);
+  }
+
+  Future<bool> _recoverAfterFailure() async {
+    debugPrint('[MusicFly] transport failure -> sweeping address pool');
+    var outcome = await _probeAddresses();
+    if (outcome == _ProbeOutcome.reachable) return true;
+    if (outcome == _ProbeOutcome.authExpired) return _reloginSilently();
+    // Every link is down. Gateway / relay links often come back once the
+    // fnOS session token is refreshed, so try that before giving up.
+    if (await _recoverFnConnect()) {
+      outcome = await _probeAddresses();
+      if (outcome == _ProbeOutcome.reachable) return true;
+      if (outcome == _ProbeOutcome.authExpired) return _reloginSilently();
+    }
+    return false;
+  }
+
+  /// An explicit 401 / Subsonic 40-41 is a credentials problem, not a dead
+  /// address: renew the session instead of hopping links.
+  Future<bool> _onAuthFailure() async {
+    if (await _reloginSilently()) return true;
+    _requireRelogin('登录已过期，请重新登录');
+    return false;
+  }
+
+  /// A sweep found every link answering with an auth rejection.
+  Future<void> _handleExpiredSession() async {
+    if (await _reloginSilently()) return;
+    _requireRelogin('登录已过期，请重新登录');
+  }
+
+  /// Shows the sign-in gate. The fast probe loop keeps running in the
+  /// background: if the network recovers by itself, [_clearRelogin] sends the
+  /// user straight back to the library without a manual sign-in.
+  void _requireRelogin(String reason) {
+    if (_disposed || _reloginRequired) return;
+    _reloginRequired = true;
+    _reloginReason = reason;
+    debugPrint('[MusicFly] $reason -> 触发重新登录');
+    notifyListeners();
+  }
+
+  void _clearRelogin() {
+    if (!_reloginRequired && _reloginReason == null) return;
+    _reloginRequired = false;
+    _reloginReason = null;
+    notifyListeners();
+  }
+
+  /// Keeps probing the whole pool while offline, with exponential backoff,
+  /// and escalates to the login page after [_reloginAfterFailures] rounds.
+  void _noteOffline() {
+    _offlineStreak++;
+    if (_offlineStreak >= _reloginAfterFailures) {
+      _requireRelogin('所有连接地址均不可达，请重新登录');
+    }
+    if (_offlineTimer?.isActive ?? false) return;
+    final index = (_offlineStreak - 1).clamp(0, _offlineBackoff.length - 1);
+    _offlineTimer = Timer(_offlineBackoff[index], () {
+      _offlineTimer = null;
+      if (!_disposed) unawaited(_probeAddresses());
+    });
+  }
+
+  /// FNID unified-gateway links can mint a fresh Music Free session from the
+  /// trusted NAS identity without an app password — that is what recovers a
+  /// day-old expired JWT without bothering the user. Ordinary logins have no
+  /// stored app password, so they fall through to the sign-in gate.
+  Future<bool> _reloginSilently() async {
     final session = _session;
-    if (session == null || session.allAddresses.length < 2) return;
-    final now = DateTime.now();
-    final last = _lastFailureProbe;
-    if (last != null && now.difference(last) < _failureProbeCooldown) return;
-    _lastFailureProbe = now;
-    debugPrint(
-      '[MusicFly] transport failure -> probing '
-      '${session.allAddresses.length} addresses (active ${session.baseUrl})',
-    );
-    unawaited(_probeAddresses());
+    if (session == null || _disposed || _relogining) return false;
+    final last = _lastReloginAttempt;
+    if (last != null &&
+        DateTime.now().difference(last) < _reloginCooldown) {
+      return false;
+    }
+    Uri? gateway;
+    for (final address in <Uri>[session.baseUrl, ...session.allAddresses]) {
+      if (isFnGatewayPath(address.toString())) {
+        gateway = address;
+        break;
+      }
+    }
+    if (gateway == null) return false;
+    _relogining = true;
+    _lastReloginAttempt = DateTime.now();
+    try {
+      // Gateway auth rides on the fnOS token; refresh it first. Rate-limited
+      // and harmless when no NAS credentials were remembered.
+      await _recoverFnConnect();
+      final fresh = await client.gatewayLogin(
+        gateway.toString(),
+        anonymous: true,
+      );
+      final current = _session;
+      if (current == null || _disposed) return false;
+      final updated = fresh.copyWith(
+        baseUrl: gateway,
+        addresses: buildAddressPool(gateway, current.allAddresses),
+        fnConnect: current.fnConnect,
+      );
+      client.restore(updated);
+      _session = updated;
+      await _store.save(updated);
+      _offlineStreak = 0;
+      _clearRelogin();
+      debugPrint('[MusicFly] silent re-login ok');
+      unawaited(_probeAddresses());
+      unawaited(select(Section.home));
+      return true;
+    } catch (error) {
+      debugPrint('[MusicFly] silent re-login failed: $error');
+      return false;
+    } finally {
+      _relogining = false;
+    }
   }
 
   /// Addresses a manual "probe now" is currently running for (settings page).
@@ -917,75 +1075,110 @@ class AppModel extends ChangeNotifier {
   void _stopAddressProbe() {
     _addressTimer?.cancel();
     _addressTimer = null;
+    _offlineTimer?.cancel();
+    _offlineTimer = null;
     _addressStatuses = {};
   }
 
-  Future<void> _probeAddresses() async {
-    final session = _session;
-    if (session == null || _probingAddresses || _disposed) return;
-    _probingAddresses = true;
+  /// Sweeps the entire pool once. Concurrent callers share the same Future,
+  /// so a burst of failing requests cannot pile up parallel sweeps.
+  Future<_ProbeOutcome> _probeAddresses() async {
+    final running = _probeInFlight;
+    if (running != null) return running;
+    final future = _runProbe();
+    _probeInFlight = future;
     try {
-      final addresses = session.allAddresses;
-      final results = await Future.wait([
-        for (final address in addresses) client.pingAddress(address),
-      ]);
-      if (_disposed) return;
-      final next = <String, ServerInfo>{
-        for (var i = 0; i < addresses.length; i++)
-          addresses[i].toString(): results[i],
-      };
-      final online = <Uri>[
-        for (var i = 0; i < addresses.length; i++)
-          if (results[i].online) addresses[i],
-      ];
-      if (online.isEmpty && session.fnConnect) {
-        // Every link is down: the device likely left the LAN and the cached
-        // fnOS token expired. Silently re-establish the fnOS session with the
-        // remembered NAS account so the gateway / relay links authenticate
-        // again, then re-probe.
-        unawaited(_recoverFnConnect());
-      }
-      debugPrint(
-        '[MusicFly] address probe: ${online.length}/${addresses.length} online'
-        '${online.isEmpty ? '' : ' -> ${online.join(', ')}'}',
-      );
-      final changed = !mapEquals(next, _addressStatuses);
-      _addressStatuses = next;
-      _promoteBestAddress(session, addresses, results);
-      if (changed || _session != session) notifyListeners();
+      return await future;
     } finally {
-      _probingAddresses = false;
+      _probeInFlight = null;
     }
+  }
+
+  Future<_ProbeOutcome> _runProbe() async {
+    final session = _session;
+    if (session == null || _disposed) return _ProbeOutcome.unreachable;
+    final addresses = session.allAddresses;
+    final results = await Future.wait([
+      for (final address in addresses) client.pingAddress(address),
+    ]);
+    if (_disposed) return _ProbeOutcome.unreachable;
+    final next = <String, ServerInfo>{
+      for (var i = 0; i < addresses.length; i++)
+        addresses[i].toString(): results[i],
+    };
+    final online = <Uri>[
+      for (var i = 0; i < addresses.length; i++)
+        if (results[i].online) addresses[i],
+    ];
+    final authExpired = results.any((info) => info.authRequired);
+    final outcome = online.isNotEmpty
+        ? _ProbeOutcome.reachable
+        : authExpired
+        ? _ProbeOutcome.authExpired
+        : _ProbeOutcome.unreachable;
+    debugPrint(
+      '[MusicFly] address probe: ${online.length}/${addresses.length} online'
+      '${authExpired ? ' (auth expired)' : ''}',
+    );
+    final changed = !mapEquals(next, _addressStatuses);
+    _addressStatuses = next;
+    // Among online links the fastest one wins (LAN preferred). Never re-
+    // authenticates — both endpoints share the same credentials.
+    _promoteBestAddress(session, addresses, results);
+
+    if (outcome == _ProbeOutcome.reachable) {
+      _offlineStreak = 0;
+      _offlineTimer?.cancel();
+      _offlineTimer = null;
+      _clearRelogin();
+    } else if (outcome == _ProbeOutcome.authExpired) {
+      // Every link answered, but with an auth rejection. This is a dead
+      // session, not an outage: skip the offline loop and go to re-login.
+      unawaited(_handleExpiredSession());
+    } else {
+      // Truly unreachable: refresh the fnOS token (gateway / relay links
+      // often come back), then keep sweeping on a fast backoff.
+      if (session.fnConnect) {
+        unawaited(
+          _recoverFnConnect().then((refreshed) {
+            if (refreshed && !_disposed) unawaited(_probeAddresses());
+          }),
+        );
+      }
+      _noteOffline();
+    }
+    if (changed || _session != session) notifyListeners();
+    return outcome;
   }
 
   /// Re-establishes the fnOS session with the remembered NAS account when an
   /// FNID session has lost every link (left the LAN, cached token expired) so
-  /// the gateway / relay links can authenticate again. Silent — the user only
-  /// notices the connection returning. A 2FA-gated account cannot be recovered
-  /// without a fresh code; in that case the FNID panel must be reopened.
-  Future<void> _recoverFnConnect() async {
+  /// the gateway / relay links can authenticate again. Returns true when the
+  /// tokens were actually refreshed — the caller then re-probes. A 2FA-gated
+  /// account cannot be recovered without a fresh code.
+  Future<bool> _recoverFnConnect() async {
     final session = _session;
     if (session == null ||
         !session.fnConnect ||
         _reauthing ||
         _disposed) {
-      return;
+      return false;
     }
     if (_lastReauth != null &&
         DateTime.now().difference(_lastReauth!) < _reauthCooldown) {
-      return;
+      return false;
     }
     final hasRemote = session.allAddresses.any(
       (u) => isFnGatewayPath(u.toString()) || isFnRelayHost(u.host),
     );
-    if (!hasRemote) return;
+    if (!hasRemote) return false;
     final creds = await loadFnOsCredentials();
-    if (creds == null) return;
+    if (creds == null) return false;
     _reauthing = true;
     _lastReauth = DateTime.now();
     try {
       final fnId = await loadLastFnId();
-      if (fnId == null) return;
+      if (fnId == null) return false;
       final params = await resolveFnId(fnId);
       final appDomains = await _signInFnOs(
         fnId,
@@ -1015,12 +1208,14 @@ class AppModel extends ChangeNotifier {
         _session = updated;
         unawaited(_store.save(updated));
       }
-      debugPrint('[MusicFly] fnOS re-auth ok, re-probing remote links');
-      unawaited(_probeAddresses());
+      debugPrint('[MusicFly] fnOS re-auth ok');
+      return true;
     } on FnOsTwoFaRequired {
       debugPrint('[MusicFly] fnOS re-auth needs 2FA; cannot recover silently');
+      return false;
     } catch (error) {
       debugPrint('[MusicFly] fnOS re-auth failed: $error');
+      return false;
     } finally {
       _reauthing = false;
     }
@@ -1961,7 +2156,8 @@ class AppModel extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     client.onTransportFailure = null;
-    _addressTimer?.cancel();
+    client.onAuthFailure = null;
+    _stopAddressProbe();
     _castStateSub?.cancel();
     _castVolumeSub?.cancel();
     unawaited(_castService?.dispose());

@@ -30,6 +30,14 @@ class AuthException extends MusicFreeException {
   AuthException(super.message);
 }
 
+/// The active endpoint did not answer like our backend: socket error,
+/// timeout, captive portal / HTML gateway page, or a 5xx. Unlike a business
+/// error this means "this address is unusable right now" and is the trigger
+/// for an address-pool sweep + one replay of the failed request.
+class TransportException extends MusicFreeException {
+  TransportException(super.message);
+}
+
 /// The fnOS gateway knows the NAS identity but no Music Free account has been
 /// bound to it yet. The caller should ask once for the app credentials and
 /// call [MusicFreeClient.gatewayBind]; later sign-ins are passwordless.
@@ -46,10 +54,17 @@ class MusicFreeClient {
 
   /// Fired when a request fails at the transport layer (timeout / socket
   /// error) or the reply is not our API at all (e.g. a captive portal or the
-  /// gateway login page). The host uses it to re-probe the address pool
-  /// immediately instead of waiting for the periodic sweep — this is what
-  /// makes leaving the LAN recover without a several-minute gap.
-  void Function()? onTransportFailure;
+  /// gateway login page). Unlike a fire-and-forget notification this is
+  /// *awaited*: the host sweeps the whole address pool, may switch
+  /// [baseUrl], and returns true when the request should be replayed once
+  /// on the (possibly new) endpoint. False propagates the original error.
+  Future<bool> Function()? onTransportFailure;
+
+  /// Fired when the server explicitly rejects our credentials (HTTP 401/403
+  /// or Subsonic code 40/41) — typical for a day-old JWT. The host tries a
+  /// silent sign-in (FNID gateway links are passwordless) and returns true
+  /// when the session was renewed and the request can be replayed.
+  Future<bool> Function()? onAuthFailure;
 
   MusicFreeSession? get session => _session;
 
@@ -93,9 +108,18 @@ class MusicFreeClient {
   /// session payload as [login]. Only meaningful for `/app/<name>/` links —
   /// on TCP/relay links the endpoint is disabled (404) and the caller falls
   /// back to [login].
-  Future<MusicFreeSession> gatewayLogin(String rawUrl) async {
+  Future<MusicFreeSession> gatewayLogin(
+    String rawUrl, {
+    bool anonymous = false,
+  }) async {
     final base = _normalize(rawUrl);
-    final root = await _post('rest/api/v1/auth/gateway-login', {}, base: base);
+    final root = await _post(
+      'rest/api/v1/auth/gateway-login',
+      {},
+      base: base,
+      // A silent re-login must not present the expired JWT it is replacing.
+      anonymous: anonymous,
+    );
     if (root['needBind'] == true) {
       throw GatewayBindRequiredException(
         _string(root, ['error']) ?? '该飞牛账号尚未绑定 Music Free 账号',
@@ -304,24 +328,51 @@ class MusicFreeClient {
           .get(uri, headers: _headers(base: base))
           .timeout(const Duration(seconds: 6));
       watch.stop();
-      final online = response.statusCode == 200;
+      final latency = watch.elapsedMilliseconds;
+      // 401/403 (or a Subsonic 40/41 envelope) means the link is fine and
+      // the *credentials* are dead. Report it separately: hopping to another
+      // address cannot fix an expired JWT, but a silent re-login can.
+      final httpAuthFailure =
+          response.statusCode == 401 || response.statusCode == 403;
       Object? decoded;
       try {
         decoded = jsonDecode(response.body);
       } catch (_) {
-        return ServerInfo(online: false, latencyMs: watch.elapsedMilliseconds);
+        return ServerInfo(
+          online: false,
+          latencyMs: latency,
+          authRequired: httpAuthFailure,
+        );
       }
       if (decoded is! Map<String, dynamic>) {
-        return ServerInfo(online: false, latencyMs: watch.elapsedMilliseconds);
+        return ServerInfo(
+          online: false,
+          latencyMs: latency,
+          authRequired: httpAuthFailure,
+        );
       }
       Map<String, dynamic> root;
       try {
         root = _unwrap(decoded);
+      } on AuthException {
+        return ServerInfo(
+          online: false,
+          latencyMs: latency,
+          authRequired: true,
+        );
       } on MusicFreeException {
-        return ServerInfo(online: false, latencyMs: watch.elapsedMilliseconds);
+        return ServerInfo(
+          online: false,
+          latencyMs: latency,
+          authRequired: httpAuthFailure,
+        );
       }
-      if (!online || _text(root['status']) != 'ok') {
-        return ServerInfo(online: false, latencyMs: watch.elapsedMilliseconds);
+      if (response.statusCode != 200 || _text(root['status']) != 'ok') {
+        return ServerInfo(
+          online: false,
+          latencyMs: latency,
+          authRequired: httpAuthFailure,
+        );
       }
       return ServerInfo(
         online: true,
@@ -512,36 +563,47 @@ class MusicFreeClient {
     String path, [
     Map<String, String> params = const {},
   ]) async {
-    final active = _session;
-    if (active == null) throw AuthException('尚未登录');
-    final uri = _uri(active.baseUrl, path, {
-      'f': 'json',
-      'v': '1.16.1',
-      'c': 'MusicFly',
-      ...params,
+    if (_session == null) throw AuthException('尚未登录');
+    // The request is built *inside* the closure on purpose: after a failover
+    // sweep the host may have changed [baseUrl], so a replay has to resolve
+    // the URI and auth headers again instead of reusing the dead endpoint.
+    return _send(() {
+      final active = _session!;
+      final uri = _uri(active.baseUrl, path, {
+        'f': 'json',
+        'v': '1.16.1',
+        'c': 'MusicFly',
+        ...params,
+      });
+      return _http.get(uri, headers: _headers());
     });
-    return _send(() => _http.get(uri, headers: _headers()));
   }
 
   Future<Map<String, dynamic>> _post(
     String path,
     Map<String, dynamic> payload, {
     Uri? base,
+    bool anonymous = false,
   }) async {
     final target = base ?? _session?.baseUrl;
     if (target == null) throw AuthException('尚未登录');
-    final uri = _uri(target, path, const {});
     return _send(
       () => _http.post(
-        uri,
-        headers: {..._headers(base: base), 'Content-Type': 'application/json'},
+        _uri(target, path, const {}),
+        headers: {
+          ..._headers(base: base, anonymous: anonymous),
+          'Content-Type': 'application/json',
+        },
         body: jsonEncode(payload),
       ),
+      // Sign-in calls must never be replayed or kick off a failover sweep:
+      // a wrong password is not an unreachable address.
+      retryable: false,
     );
   }
 
-  Map<String, String> _headers({Uri? base}) {
-    final token = _session?.token;
+  Map<String, String> _headers({Uri? base, bool anonymous = false}) {
+    final token = anonymous ? null : _session?.token;
     final target = base ?? _session?.baseUrl;
     final extra = target != null
         ? fnRelayHeadersFor(target.toString(), bearerToken: token)
@@ -564,50 +626,98 @@ class MusicFreeClient {
     };
   }
 
-  void _notifyTransportFailure() {
-    final callback = onTransportFailure;
-    if (callback == null) return;
+  /// Keeps the backend's own 401 message (e.g. "wrong password" during
+  /// sign-in) instead of blanket-reporting an expired session.
+  String _authMessage(String body) {
     try {
-      callback();
+      final decoded = jsonDecode(body);
+      if (decoded is Map) {
+        for (final key in ['error', 'message']) {
+          final value = decoded[key];
+          if (value is String && value.isNotEmpty) return value;
+        }
+        final envelope = decoded['subsonic-response'];
+        if (envelope is Map && envelope['error'] is Map) {
+          final value = envelope['error']['message'];
+          if (value is String && value.isNotEmpty) return value;
+        }
+      }
+    } catch (_) {}
+    return '登录已过期，请重新登录';
+  }
+
+  /// Awaits the host's recovery attempt. The host's own errors are swallowed
+  /// so a broken prober can never mask the original request failure.
+  Future<bool> _recover(Future<bool> Function()? callback) async {
+    if (callback == null) return false;
+    try {
+      return await callback();
     } catch (_) {
-      // The host's failover prober must never alter this request's error.
+      return false;
     }
   }
 
+  /// Sends [request], and — on a recoverable failure — waits for the host to
+  /// sweep the address pool / renew the session, then replays the request
+  /// exactly once. [request] is a builder, not a pre-built Future, so the
+  /// replay re-resolves [baseUrl] and the auth headers.
   Future<Map<String, dynamic>> _send(
-    Future<http.Response> Function() request,
-  ) async {
-    http.Response response;
-    try {
-      response = await request().timeout(const Duration(seconds: 30));
-    } on TimeoutException {
-      _notifyTransportFailure();
-      throw MusicFreeException('服务器响应超时，请检查网络或地址');
-    } catch (error) {
-      _notifyTransportFailure();
-      throw MusicFreeException('无法连接服务器：$error');
-    }
+    Future<http.Response> Function() request, {
+    bool retryable = true,
+  }) async {
+    final attempts = retryable ? 2 : 1;
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      final last = attempt == attempts - 1;
+      http.Response response;
+      try {
+        response = await request().timeout(const Duration(seconds: 30));
+      } on MusicFreeException {
+        rethrow;
+      } on TimeoutException {
+        if (!last && await _recover(onTransportFailure)) continue;
+        throw TransportException('服务器响应超时，请检查网络或地址');
+      } catch (error) {
+        if (!last && await _recover(onTransportFailure)) continue;
+        throw TransportException('无法连接服务器：$error');
+      }
 
-    final body = response.body;
-    if (body.trim().isEmpty) {
-      // Usually a proxy / gateway interfering, not a backend reply.
-      _notifyTransportFailure();
-      throw MusicFreeException('服务器返回 HTTP ${response.statusCode}');
+      final body = response.body;
+      // An explicit auth rejection means the endpoint is alive but our token
+      // is dead. Sweeping addresses cannot help; only a fresh sign-in can.
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        if (!last && await _recover(onAuthFailure)) continue;
+        throw AuthException(_authMessage(body));
+      }
+
+      if (body.trim().isEmpty) {
+        // Usually a proxy / gateway interfering, not a backend reply.
+        if (!last && await _recover(onTransportFailure)) continue;
+        throw TransportException('服务器返回 HTTP ${response.statusCode}');
+      }
+      Object? decoded;
+      try {
+        decoded = jsonDecode(body);
+      } catch (_) {
+        // HTML login pages and captive portals look exactly like this.
+        if (!last && await _recover(onTransportFailure)) continue;
+        throw TransportException('服务器返回了无法解析的内容');
+      }
+      if (decoded is! Map<String, dynamic>) {
+        if (!last && await _recover(onTransportFailure)) continue;
+        throw TransportException('服务器返回了非对象内容');
+      }
+      if (response.statusCode >= 500) {
+        if (!last && await _recover(onTransportFailure)) continue;
+        throw TransportException('服务器返回 HTTP ${response.statusCode}');
+      }
+      try {
+        return _unwrap(decoded);
+      } on AuthException {
+        if (!last && await _recover(onAuthFailure)) continue;
+        rethrow;
+      }
     }
-    Object? decoded;
-    try {
-      decoded = jsonDecode(body);
-    } catch (_) {
-      // HTML login pages and captive portals look exactly like this. Treat it
-      // as "this address is no longer our server" and let the prober hop.
-      _notifyTransportFailure();
-      throw MusicFreeException('服务器返回了无法解析的内容');
-    }
-    if (decoded is! Map<String, dynamic>) {
-      _notifyTransportFailure();
-      throw MusicFreeException('服务器返回了非对象内容');
-    }
-    return _unwrap(decoded);
+    throw MusicFreeException('请求失败');
   }
 
   /// Music Free answers both `subsonic-response` envelopes and bare objects.
