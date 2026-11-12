@@ -183,43 +183,21 @@ class _LoginPageState extends State<LoginPage> {
     final size = MediaQuery.sizeOf(context);
     final landscape = size.width > size.height;
 
+    // Exactly one status banner: a request error wins over the re-login
+    // notice. Previously a notice, a bordered "step 1 complete" card and a
+    // long hint could all be on screen at once, competing for attention.
+    final status = model.error ?? widget.notice;
     final List<Widget> form = [
       _tabs(),
       const SizedBox(height: 14),
-      if (widget.notice != null) ...[
-        Container(
-          margin: const EdgeInsets.only(bottom: 14),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: Mf.accentWash,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            '${widget.notice}\n后台仍在自动探测连接，恢复后会自动返回。',
-            style: const TextStyle(
-              color: Mf.accentHover,
-              fontSize: 12,
-              height: 1.5,
-            ),
-          ),
+      if (status != null)
+        _StatusBanner(
+          message: status,
+          detail: model.error == null ? '网络恢复后自动返回' : null,
+          error: model.error != null,
         ),
-      ],
       if (_mode == _LoginMode.direct) ..._directForm(model),
       if (_mode == _LoginMode.fnConnect) ..._fnConnectForm(model),
-      if (model.error != null) ...[
-        const SizedBox(height: 14),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          decoration: BoxDecoration(
-            color: Mf.accentWash,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            model.error!,
-            style: const TextStyle(color: Mf.accentHover, fontSize: 12),
-          ),
-        ),
-      ],
       const SizedBox(height: 22),
       MfPrimaryButton(
         label: model.connecting
@@ -378,12 +356,13 @@ class _LoginPageState extends State<LoginPage> {
     return [
       Text(
         needsNas
-            ? '内网 / 公网直连不可达 · 登录飞牛账号后可通过统一网关 / 中继远程访问'
+            ? '直连不可达 · 登录飞牛账号后可走网关 / 中继远程访问'
             : _rememberedNasUser != null
-                ? '第一步 · 连接 FNID：优先直连内网 / 公网；已记住飞牛账号 '
-                    '$_rememberedNasUser，离开内网后自动切换'
-                : '第一步 · 连接 FNID：优先直连内网 / 公网，无需飞牛账号；展开下方「外网自动切换」可登记飞牛账号，离开内网后自动切换',
-        style: const TextStyle(color: Mf.faint, fontSize: 11),
+                ? '第一步 · 已记住飞牛账号 $_rememberedNasUser，离开内网自动切换'
+                : '第一步 · 输入 FNID，优先直连内网 / 公网',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: Mf.muted, fontSize: 11.5, height: 1.4),
       ),
       const SizedBox(height: 10),
       MfField(
@@ -408,10 +387,11 @@ class _LoginPageState extends State<LoginPage> {
               Expanded(
                 child: Text(
                   _rememberedNasUser != null
-                      ? '外网自动切换 · 已记住飞牛账号 $_rememberedNasUser，'
-                          '离开内网后自动走网关 / 中继'
-                      : '外网自动切换（可选）· 填一次飞牛账号，离开内网后自动走网关 / 中继',
-                  style: const TextStyle(color: Mf.faint, fontSize: 11),
+                      ? '外网自动切换 · 已记住 $_rememberedNasUser'
+                      : '外网自动切换（可选）· 登记飞牛账号，离开内网自动切换',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Mf.muted, fontSize: 11),
                 ),
               ),
             ],
@@ -455,51 +435,109 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   /// Step 2: the NAS is connected; ask for the Music Free credentials.
+  ///
+  /// The connection summary is one line of muted text rather than a second
+  /// bordered banner. During a re-login the status banner above already
+  /// explains what happened, so the summary is dropped entirely then (only
+  /// the "重新连接" action remains). Every long label is line-capped, which
+  /// is what used to overflow the old card on narrow windows.
   List<Widget> _fnConnectStep2(AppModel model) {
     final probe = model.fnProbe;
     final links = probe?.reachable.length ?? 0;
+    final showSummary = widget.notice == null && model.error == null;
     void submit() =>
         model.loginFnPrepared(username: _username.text, password: _password.text);
     return [
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: Mf.accentWash,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Mf.accent.withValues(alpha: 0.35)),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.check_circle, size: 16, color: Mf.accent),
-            const SizedBox(width: 8),
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (showSummary) ...[
+            const Icon(Icons.check_circle, size: 14, color: Mf.accent),
+            const SizedBox(width: 6),
             Expanded(
-                child: Text(
-                  '第一步完成 · ${model.fnViaNas ? '飞牛账号已连接' : '直连模式'}，'
-                  '探测到 $links 条可达链路，已保存 ${model.fnAddressCount} 条候选'
-                  '用于内网 / 外网自动切换',
-                  style: const TextStyle(color: Mf.accentHover, fontSize: 12),
-                ),
-              ),
-            GestureDetector(
-              onTap: model.resetFnConnect,
-              child: const Text(
-                '重新连接',
-                style: TextStyle(color: Mf.accent, fontSize: 12),
+              child: Text(
+                '已连接 · $links 条可达链路，${model.fnAddressCount} 条备用',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Mf.muted, fontSize: 11.5),
               ),
             ),
-          ],
-        ),
+          ] else
+            const Spacer(),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: model.resetFnConnect,
+            child: const Text(
+              '重新连接',
+              style: TextStyle(color: Mf.accent, fontSize: 11.5),
+            ),
+          ),
+        ],
       ),
-      const SizedBox(height: 14),
+      const SizedBox(height: 10),
       Text(
         model.fnGatewayLoginAvailable
-            ? '第二步 · 飞牛账号已由网关校验，直接点「登录」即可免密进入；首次使用填一次下方应用账号密码完成绑定'
-            : '第二步 · 登录 Music Free',
-        style: const TextStyle(color: Mf.faint, fontSize: 11),
+            ? '第二步 · 网关已校验身份，点「登录」即可进入；首次需填一次应用账号'
+            : '第二步 · 输入 Music Free 账号密码',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: Mf.muted, fontSize: 11.5, height: 1.4),
       ),
       const SizedBox(height: 10),
       _credentialsFields(submit),
     ];
+  }
+}
+
+/// The single, bounded status banner above the form.
+///
+/// Text is line-capped and ellipsized so a long backend error or a long
+/// re-login reason can never grow the card past its decoration or squeeze
+/// the rest of the form.
+class _StatusBanner extends StatelessWidget {
+  const _StatusBanner({
+    required this.message,
+    this.detail,
+    this.error = false,
+  });
+
+  final String message;
+  final String? detail;
+  final bool error;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: Mf.accentWash,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(
+            error ? Icons.error_outline : Icons.info_outline,
+            size: 15,
+            color: Mf.accentHover,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              detail == null ? message : '$message · $detail',
+              maxLines: error ? 3 : 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Mf.accentHover,
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

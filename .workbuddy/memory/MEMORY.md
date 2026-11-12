@@ -6,6 +6,7 @@
 - Flutter SDK：macOS 在 `~/development/flutter`；Windows（当前机器）在 `D:\flutter`，不在 PATH 上，VS 2022 C++ 工具链已装。
 - 后端在隔壁 `~/Documents/code/music-free/backend`（Go/Gin，localhost:14533，admin/admin），服务端由用户自己启动，不要代启。
 - 验证视觉用临时 golden 渲染（Arial Unicode 字体 + RepaintBoundary.toImage），核对后删除测试文件；沙箱无 screencapture 权限。
+- **用户偏好：界面提示要少**。登录页一次只显示一条状态条（error 优先于 relogin notice），不要堆叠多个带框提示；所有长文本必须 `maxLines` + `overflow: TextOverflow.ellipsis`；说明文字用 `Mf.muted` 而不是几乎看不清的 `Mf.faint`。重登时第二步的「已连接」摘要要隐藏，只留「重新连接」。
 
 ## 关键技术事实
 
