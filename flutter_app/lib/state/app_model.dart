@@ -616,8 +616,9 @@ class AppModel extends ChangeNotifier {
   }
 
   /// Step 1 of the Fn Connect sign-in: resolve the FNID and probe for the
-  /// Music Free backend on [backendPort]. Direct links (LAN / public IPs
-  /// straight to the port) are tried first and need no fnOS credentials —
+  /// Music Free backend on the fixed [kDefaultBackendPort] (14533). There is
+  /// deliberately no port field in the FNID form. Direct links (LAN / public
+  /// IPs straight to that port) are tried first and need no fnOS credentials —
   /// like the official Feiniu music app, where the app account alone is
   /// enough. Only when every direct link is unreachable are the fnOS
   /// gateway / relay subdomains probed, which require an fnOS sign-in
@@ -643,7 +644,6 @@ class AppModel extends ChangeNotifier {
     String? nasUsername,
     String? nasPassword,
     String? nasTwoFaCode,
-    required String backendPort,
   }) async {
     if (_connecting) return;
     _connecting = true;
@@ -653,7 +653,8 @@ class AppModel extends ChangeNotifier {
     _fnTwoFaRequired = false;
     notifyListeners();
     try {
-      final port = int.tryParse(backendPort.trim()) ?? 14533;
+      // The backend port is fixed; the FNID form never supplies one.
+      const port = kDefaultBackendPort;
       final params = await resolveFnId(fnId);
       // Remember the ID even if the step later fails, so the field prefills.
       unawaited(saveLastFnId(fnId));
@@ -711,7 +712,6 @@ class AppModel extends ChangeNotifier {
               );
         _fnAddressPool = [for (final candidate in pool) candidate.address];
         _fnProbe = directProbe;
-        unawaited(saveLastFnPort(port));
         return;
       }
 
@@ -758,7 +758,6 @@ class AppModel extends ChangeNotifier {
       // Remember the NAS account that unlocked these remote links so they keep
       // working after a token expiry / network change without re-entering it.
       await saveFnOsCredentials(username, password);
-      unawaited(saveLastFnPort(port));
     } on FnConnectException catch (failure) {
       _error = failure.message;
     } on FnOsException catch (failure) {

@@ -48,7 +48,6 @@ class _LoginPageState extends State<LoginPage> {
   final _nasUsername = TextEditingController();
   final _nasPassword = TextEditingController();
   final _nasTwoFa = TextEditingController();
-  final _port = TextEditingController(text: '14533');
 
   /// The optional "warm up remote links" section on the FNID tab. Kept
   /// collapsed so the common LAN sign-in still needs just the FNID.
@@ -84,13 +83,6 @@ class _LoginPageState extends State<LoginPage> {
         setState(() => _fnId.text = fnId);
       }
     });
-    // Prefill the backend port remembered from the last successful probe
-    // (default 14533; the field stays hidden until a probe fails).
-    loadLastFnPort().then((port) {
-      if (port != null && mounted) {
-        setState(() => _port.text = port);
-      }
-    });
     // Prefill the remembered fnOS account so the "外网自动切换" section shows
     // it is already armed, and the user does not have to retype it.
     loadFnOsCredentials().then((creds) {
@@ -113,7 +105,6 @@ class _LoginPageState extends State<LoginPage> {
     _nasUsername.dispose();
     _nasPassword.dispose();
     _nasTwoFa.dispose();
-    _port.dispose();
     super.dispose();
   }
 
@@ -129,7 +120,6 @@ class _LoginPageState extends State<LoginPage> {
         nasUsername: _nasUsername.text,
         nasPassword: _nasPassword.text,
         nasTwoFaCode: _nasTwoFa.text,
-        backendPort: _port.text,
       );
     }
   }
@@ -370,9 +360,9 @@ class _LoginPageState extends State<LoginPage> {
   /// Step 1: FNID connection. Direct links are probed without any fnOS
   /// credentials; the NAS form is mandatory when every direct link is
   /// unreachable (remote access rides the gateway / relay), and optional on
-  /// the LAN to warm up those tokens in advance. The port field follows the
-  /// mandatory rule: 14533 is assumed silently and the field is only revealed
-  /// once a probe fails, so a non-default setup can correct it.
+  /// the LAN to warm up those tokens in advance. The Music Free backend port
+  /// is fixed at 14533 and is deliberately not a form field — the FNID flow
+  /// should only need the ID (and, off the LAN, the NAS account).
   List<Widget> _fnConnectStep1(AppModel model) {
     final needsNas = model.fnNasRequired || model.fnTwoFaRequired;
     // On the LAN the NAS credentials are optional: filling them mints the
@@ -384,7 +374,6 @@ class _LoginPageState extends State<LoginPage> {
       nasUsername: _nasUsername.text,
       nasPassword: _nasPassword.text,
       nasTwoFaCode: _nasTwoFa.text,
-      backendPort: _port.text,
     );
     return [
       Text(
@@ -404,19 +393,6 @@ class _LoginPageState extends State<LoginPage> {
         onChanged: (value) => setState(() => _fnId.text = value),
         onSubmit: submit,
       ),
-      // The backend port is only relevant once probing fails (14533 is
-      // assumed by default); revealing it here lets a non-default setup
-      // correct it before retrying the direct probe.
-      if (needsNas) ...[
-        const SizedBox(height: 10),
-        MfField(
-          label: '服务端口（默认 14533，若不同请修改）',
-          value: _port.text,
-          placeholder: '14533',
-          onChanged: (value) => _port.text = value,
-          onSubmit: submit,
-        ),
-      ],
       if (!needsNas) ...[
         const SizedBox(height: 10),
         GestureDetector(

@@ -6,6 +6,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:musicfly/data/fn_connect.dart';
 
 void main() {
+  group('fixed backend port', () {
+    test('direct FNID candidates always use 14533', () {
+      expect(kDefaultBackendPort, 14533);
+      final params = FnConnectionParams.fromJson(const {
+        'ipv4': ['192.168.1.10'],
+      });
+      final direct = buildFnCandidates(params, kDefaultBackendPort)
+          .where((c) => !c.relay)
+          .toList();
+      expect(direct, hasLength(2));
+      for (final candidate in direct) {
+        expect(candidate.address.port, 14533);
+      }
+    });
+  });
+
   group('FnConnectionParams.fromJson', () {
     test('parses the broker response shape', () {
       final params = FnConnectionParams.fromJson(const {

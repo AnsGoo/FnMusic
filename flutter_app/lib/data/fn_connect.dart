@@ -278,10 +278,17 @@ class FnCandidate {
   final bool relay;
 }
 
+/// Port the Music Free backend listens on for direct FNID links.
+///
+/// Fixed at 14533 — the FNID form has no port field. Gateway / relay
+/// candidates use the fnOS web portal ports reported by the broker instead.
+const int kDefaultBackendPort = 14533;
+
 /// The app name registered on the fnOS unified gateway (`/app/<name>`).
 const String kFnGatewayApp = 'musicfree';
 
-/// Builds ordered probe candidates for a backend listening on [backendPort].
+/// Builds ordered probe candidates for a backend listening on [backendPort]
+/// (the FNID flow always passes [kDefaultBackendPort] = 14533).
 ///
 /// Priority mirrors the Feiniu client: LAN IPv4 → public IPv6 → public IPv4 →
 /// LAN gateway → NAS-domain gateway → relay subdomains. IP candidates try HTTP
@@ -493,22 +500,6 @@ Future<String?> loadLastFnId() async {
 Future<void> saveLastFnId(String fnId) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setString(_lastFnIdKey, fnId.trim());
-}
-
-/// Remembers the backend port that the last successful Fn Connect probe used,
-/// so a non-default setup does not have to retype it (the field itself stays
-/// hidden until a probe fails; 14533 is the default).
-const String _lastFnPortKey = 'musicfly.fn.port';
-
-Future<String?> loadLastFnPort() async {
-  final prefs = await SharedPreferences.getInstance();
-  final value = prefs.getString(_lastFnPortKey);
-  return (value == null || value.isEmpty) ? null : value;
-}
-
-Future<void> saveLastFnPort(int port) async {
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setString(_lastFnPortKey, '$port');
 }
 
 /// Remembers the relay entry-token issued for the current fnOS session so
