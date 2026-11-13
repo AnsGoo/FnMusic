@@ -742,6 +742,9 @@ class AppModel extends ChangeNotifier {
               );
         _fnAddressPool = [for (final candidate in pool) candidate.address];
         _fnProbe = directProbe;
+        // The binding may already exist — try the passwordless gateway
+        // sign-in before showing the step-2 credentials form.
+        await _tryAutoGatewayLogin();
         return;
       }
 
@@ -788,6 +791,9 @@ class AppModel extends ChangeNotifier {
       // Remember the NAS account that unlocked these remote links so they keep
       // working after a token expiry / network change without re-entering it.
       await saveFnOsCredentials(username, password);
+      // Same shortcut here: with the fnOS session just minted, an existing
+      // NAS → Music Free binding signs the user straight into the app.
+      await _tryAutoGatewayLogin();
     } on FnConnectException catch (failure) {
       _error = failure.message;
     } on FnOsException catch (failure) {
@@ -918,18 +924,7 @@ class AppModel extends ChangeNotifier {
       } else {
         active = await client.login(address, user, pass);
       }
-      // probe.reachable is only a snapshot of the *current* network. Persist
-      // the complete FN pool instead: a WAN / gateway / relay link that is
-      // dead on the LAN is often the only one that answers outdoors.
-      final session = active.copyWith(
-        addresses: buildAddressPool(active.baseUrl, _fnAddressPool),
-        fnConnect: true,
-      );
-      client.restore(session);
-      await _store.save(session);
-      _session = session;
-      _startAddressProbe();
-      await select(Section.home);
+      await _completeFnLogin(active);
     } on MusicFreeException catch (failure) {
       _error = failure.message;
     } catch (failure) {
@@ -937,6 +932,54 @@ class AppModel extends ChangeNotifier {
     } finally {
       _connecting = false;
       notifyListeners();
+    }
+  }
+
+  /// Finishes a Music Free sign-in reached through the FNID flow: persist the
+  /// **whole** FN link pool — including links unreachable from the current
+  /// network — as an *internal* failover pool (a WAN / gateway / relay link
+  /// dead on the LAN is often the only one that answers outdoors), flag the
+  /// session as FNID-managed (settings then shows only the active endpoint
+  /// and refuses user edits) and enter the app.
+  Future<void> _completeFnLogin(MusicFreeSession active) async {
+    final session = active.copyWith(
+      addresses: buildAddressPool(active.baseUrl, _fnAddressPool),
+      fnConnect: true,
+    );
+    client.restore(session);
+    await _store.save(session);
+    _session = session;
+    _startAddressProbe();
+    await select(Section.home);
+  }
+
+  /// Tries the passwordless gateway sign-in right after the FNID probe
+  /// succeeded. The backend maps the gateway's trusted NAS identity to the
+  /// bound Music Free account ([GatewayBindRequiredException] when the
+  /// binding does not exist yet), so an already-bound user skips the step-2
+  /// credentials form entirely and lands straight in the app.
+  ///
+  /// Every failure is swallowed on purpose — no binding yet, a stale fnOS
+  /// session token, an old backend without the endpoint, TLS trouble on the
+  /// LAN portal — and the manual step-2 flow stays exactly as before. The
+  /// gateway endpoint only answers on unified-gateway links, so each such
+  /// link in the pool (LAN portal first, then the device domain) is tried.
+  Future<void> _tryAutoGatewayLogin() async {
+    final best = _fnProbe?.best;
+    if (best == null) return;
+    if (fnGatewayToken == null || fnGatewayToken!.isEmpty) return;
+    for (final address in _fnAddressPool) {
+      if (!isFnGatewayPath(address.toString())) continue;
+      try {
+        final active = await client.gatewayLogin(address.toString());
+        // The issued JWT is valid on every link in the pool, so keep the
+        // fastest probed endpoint as the base instead of the gateway link
+        // the sign-in happened to ride on.
+        await _completeFnLogin(active.copyWith(baseUrl: best));
+        return;
+      } catch (_) {
+        client.forget();
+      }
     }
   }
 

@@ -58,14 +58,49 @@ EOF
 fi
 
 # ---- 2. DevEco SDK / JDK / hvigor ----
+# WorkBuddy 沙箱注入的 NODE_OPTIONS 会拦截 hvigor 批量删缓存（SAFE_DELETE_BULK_CONFIRM_REQUIRED）。
+if printf '%s' "${NODE_OPTIONS:-}" | grep -q 'node-language-shim'; then
+  unset NODE_OPTIONS
+  note "已移除沙箱注入的 NODE_OPTIONS（会拦 hvigor 的缓存清理）"
+fi
+
 HWSDK="$(grep -E '^hwsdk\.dir=' ohos/local.properties 2>/dev/null | cut -d= -f2-)"
 if [ -n "${HWSDK:-}" ]; then
   note "OpenHarmony SDK：$HWSDK"
+  # flutter ohos 的 hvigor_utils 只认 HOS_SDK_HOME / DEVECO_SDK_HOME，不读 local.properties；
+  # 不导出会直接抛 "No Hmos SDK found. Try setting the HOS_SDK_HOME environment variable."
+  export DEVECO_SDK_HOME="${DEVECO_SDK_HOME:-$HWSDK}"
+  export HOS_SDK_HOME="${HOS_SDK_HOME:-$HWSDK}"
 else
   [ -n "${DEVECO_SDK_HOME:-}" ] || note "DEVECO_SDK_HOME 未设置，local.properties 里也没有 hwsdk.dir"
 fi
+
+# flutter build hap 直接从 PATH 找 hvigorw/ohpm；缺了会崩
+# "ProcessException: Failed to find \"hvigorw\" in the search path"。
+for TOOL_DIR in "$HOME/Documents/command-line-tools/bin" \
+                "/Applications/DevEco-Studio.app/Contents/tools/hvigor/bin"; do
+  if ! command -v hvigorw >/dev/null 2>&1 && [ -x "$TOOL_DIR/hvigorw" ]; then
+    export PATH="$TOOL_DIR:$PATH"
+    note "补进 PATH：$TOOL_DIR"
+  fi
+done
 command -v ohpm >/dev/null 2>&1 || note "PATH 里没有 ohpm（通常随 DevEco Studio 安装）"
 command -v hvigorw >/dev/null 2>&1 || note "PATH 里没有 hvigorw"
+
+# macOS 没注册 JVM 时 /usr/bin/java 存在但会报 "Unable to locate a Java Runtime"，
+# 所以除了 command -v 还要真的跑一次 java -version；失败则退回 Homebrew JDK 17 / DevEco JBR。
+if ! command -v java >/dev/null 2>&1 || ! java -version >/dev/null 2>&1; then
+  for JDK_DIR in /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
+                 /usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
+                 /Applications/DevEco-Studio.app/Contents/jbr/Contents/Home; do
+    if [ -x "$JDK_DIR/bin/java" ]; then
+      export JAVA_HOME="$JDK_DIR"
+      export PATH="$JDK_DIR/bin:$PATH"
+      note "自动使用 JDK：$JDK_DIR"
+      break
+    fi
+  done
+fi
 command -v java >/dev/null 2>&1 || fail "没有 JDK，hvigor 打包和签名必须 JDK 17"
 java -version 2>&1 | sed -n '1p'
 

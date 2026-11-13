@@ -1,0 +1,805 @@
+# Copyright 2025 Timandes White
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import asyncio
+import json
+import time
+import uuid
+import base64
+import random
+import re
+import hashlib
+import hmac
+import logging
+import ssl
+from urllib.parse import urljoin, urlparse
+from websockets.exceptions import InvalidStatus, InvalidURI
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import AES, PKCS1_v1_5
+from Crypto.Random import get_random_bytes
+from Crypto.Util.Padding import pad, unpad
+import websockets
+
+from .exceptions import HTTPSRequiredError, NotConnectedError
+
+# 设置日志格式
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# 创建logger实例
+logger = logging.getLogger(__name__)
+
+class FnosClient:
+    def __init__(self, type: str = "main"):
+        """
+        初始化FnosClient
+
+        Args:
+            type (str): 连接类型，可选值为"main"、"timer"或"file"，默认为"main"
+        """
+        if type not in ["main", "timer", "file"]:
+            raise ValueError("type参数必须是'main'、'timer'或'file'")
+            
+        self.type = type
+        self.ws = None
+        self.public_key = None
+        self.host_name = None
+        self.trim_version = None
+        self.session_id = None
+        self.connected = False
+        self.heartbeat_task = None
+        self.stop_heartbeat = False
+        self.login_response = None
+        self.login_future = None
+        self.login_reqid = None  # 用于保存登录请求的reqid
+        self.twofa_pending = None
+        self.twofa_future = None
+        self.twofa_reqid = None
+        self.login_context = {}
+        self.decrypted_secret = None
+        self.aes_key = None
+        self.iv = None
+        self.pending_requests = {}  # 用于存储待处理的请求
+        self.on_message_callback = None  # 外部消息回调函数
+        self.message_queue = asyncio.Queue()
+        # 保存连接和登录信息用于重连
+        self.endpoint = None
+        self.username = None
+        self.password = None
+        self.token = None
+        self.long_token = None
+        # SSL 配置
+        self.use_ssl = False
+        self.skip_ssl_verify = True
+
+    def _generate_reqid(self):
+        """生成唯一的reqid"""
+        # 使用时间戳和随机数来确保唯一性，不超过28个字符
+        timestamp = int(time.time() * 1000)  # 毫秒级时间戳 (13位数字)
+        random_part = uuid.uuid4().hex[:12]  # 12位随机字符串
+        # 格式化为指定格式: timestamp + random_part，总长度不超过28
+        # 13位timestamp + 12位random_part = 25位，小于28位限制
+        reqid = f"{timestamp}{random_part}"
+        return reqid
+
+    def _generate_did(self):
+        """生成设备ID"""
+        t = base64.b32encode(str(int(time.time() * 1000)).encode()).decode()
+        e = base64.b32encode(str(random.random()).encode()).decode()[:15]
+        n = base64.b32encode(str(random.random()).encode()).decode()[:15]
+        return f"{t}-{e}-{n}".lower().replace('=', '')
+
+    def _parse_endpoint(self, endpoint: str, use_ssl: bool) -> tuple:
+        """
+        解析 endpoint，返回 (host_port, actual_use_ssl)
+        
+        - 如果 endpoint 以 wss:// 开头，返回去掉前缀的地址和 True
+        - 如果 endpoint 以 ws:// 开头，返回去掉前缀的地址和 False
+        - 否则返回原地址和 use_ssl 参数值
+        """
+        if endpoint.startswith("wss://"):
+            return endpoint[6:], True
+        elif endpoint.startswith("ws://"):
+            return endpoint[5:], False
+        else:
+            return endpoint, use_ssl
+
+    @staticmethod
+    def _https_required_error(
+        error: InvalidURI,
+        requested_uri: str,
+        actual_use_ssl: bool,
+    ) -> HTTPSRequiredError | None:
+        """将匹配 fnOS 强制 HTTPS 的重定向异常转换为 SDK 异常。"""
+        if actual_use_ssl or urlparse(error.uri).scheme.lower() != "https":
+            return None
+
+        redirect_error = error.__cause__ or error.__context__
+        if not isinstance(redirect_error, InvalidStatus):
+            return None
+
+        if redirect_error.response.status_code not in {301, 302, 303, 307, 308}:
+            return None
+
+        location = redirect_error.response.headers.get("Location")
+        if location is None or urljoin(requested_uri, location) != error.uri:
+            return None
+
+        return HTTPSRequiredError(
+            requested_uri=requested_uri,
+            redirect_uri=error.uri,
+            status_code=redirect_error.response.status_code,
+        )
+
+    def _encrypt_auth_data(self, payload):
+        """加密登录阶段数据"""
+        # 生成随机AES密钥
+        self.aes_key = get_random_bytes(32)  # 256位密钥
+
+        # 使用RSA公钥加密AES密钥
+        rsa_key = RSA.import_key(self.public_key)
+        rsa_cipher = PKCS1_v1_5.new(rsa_key)
+        encrypted_aes_key = rsa_cipher.encrypt(self.aes_key)
+
+        # 使用AES密钥加密登录阶段数据
+        json_data = json.dumps(payload, separators=(',', ':'))
+        padded_data = pad(json_data.encode('utf-8'), AES.block_size)
+
+        # 生成随机IV并加密
+        self.iv = get_random_bytes(16)
+        aes_cipher = AES.new(self.aes_key, AES.MODE_CBC, self.iv)
+        encrypted_data = aes_cipher.encrypt(padded_data)
+
+        # 构造返回数据
+        return {
+            "req": "encrypted",
+            "iv": base64.b64encode(self.iv).decode('utf-8'),
+            "rsa": base64.b64encode(encrypted_aes_key).decode('utf-8'),
+            "aes": base64.b64encode(encrypted_data).decode('utf-8')
+        }
+
+    def _encrypt_login_data(
+        self,
+        username,
+        password,
+        stay=True,
+        device_type="Browser",
+        device_name="Mac OS-Safari",
+    ):
+        """加密登录数据"""
+        # 构造登录数据
+        login_data = {
+            "reqid": self._generate_reqid(),
+            "user": username,
+            "password": password,
+            "stay": stay,
+            "deviceType": device_type,
+            "deviceName": device_name,
+            "did": self._generate_did(),
+            "req": "user.login",
+            "si": self.session_id
+        }
+
+        # 保存登录请求的reqid
+        self.login_reqid = login_data["reqid"]
+        return self._encrypt_auth_data(login_data)
+
+    def _decrypt_secret(self, encrypted_secret, aes_key, iv):
+        """解密secret字段"""
+        try:
+            # 解码base64
+            encrypted_data = base64.b64decode(encrypted_secret)
+            iv_bytes = base64.b64decode(iv)
+            key_bytes = base64.b64decode(aes_key)
+
+            # 使用AES解密
+            cipher = AES.new(key_bytes, AES.MODE_CBC, iv_bytes)
+            decrypted_data = cipher.decrypt(encrypted_data)
+
+            # 移除填充
+            from Crypto.Util.Padding import unpad
+            unpadded_data = unpad(decrypted_data, AES.block_size)
+
+            return unpadded_data.decode('utf-8')
+        except Exception as e:
+            logger.error(f"解密secret失败: {e}")
+            return None
+
+    def _decrypt_login_secret(self, encrypted_secret):
+        """解密登录响应中的secret字段"""
+        try:
+            # 使用登录时生成的AES密钥和IV解密
+            aes_cipher = AES.new(self.aes_key, AES.MODE_CBC, self.iv)
+            raw_secret = base64.b64decode(encrypted_secret)
+            raw_decrypted_secret = aes_cipher.decrypt(raw_secret)
+
+            # 移除PKCS#7填充
+            unpadded_data = unpad(raw_decrypted_secret, AES.block_size)
+
+            return base64.b64encode(unpadded_data).decode('utf-8')
+        except Exception as e:
+            logger.error(f"解密登录secret失败: {e}")
+            return None
+
+    def _is_final_login_success(self, data):
+        """判断响应是否包含完整登录凭据"""
+        return (
+            data.get("result") == "succ"
+            and "token" in data
+            and "secret" in data
+        )
+
+    def _is_twofa_challenge(self, data):
+        """判断响应是否为已绑定2FA的登录验证码挑战"""
+        return (
+            data.get("result") == "succ"
+            and data.get("isBindTwofaSecret") is True
+            and data.get("isTrustedDevice") is False
+            and bool(data.get("accessToken"))
+            and "token" not in data
+            and "secret" not in data
+        )
+
+    def _is_twofa_setup_challenge(self, data):
+        """判断响应是否为强制2FA但尚未绑定TOTP的挑战"""
+        return (
+            data.get("result") == "succ"
+            and data.get("isTwofaEnforced") is True
+            and data.get("isBindTwofaSecret") is False
+            and bool(data.get("accessToken"))
+            and "token" not in data
+            and "secret" not in data
+        )
+
+    def _clear_twofa_state(self):
+        """清理两步验证临时状态"""
+        self.twofa_pending = None
+        self.twofa_reqid = None
+        self.twofa_future = None
+
+    def _handle_final_login_success(self, data):
+        """保存最终登录响应中的凭据"""
+        self.login_response = data
+        self.decrypted_secret = self._decrypt_login_secret(data["secret"])
+        self.token = data.get("token")
+        self.long_token = data.get("longToken")
+        self._clear_twofa_state()
+        logger.info("登录成功")
+        return data
+
+    def _handle_twofa_challenge(self, data, context):
+        """保存已绑定2FA登录挑战上下文"""
+        self.twofa_pending = {
+            "accessToken": data["accessToken"],
+            "username": context.get("username"),
+            "stay": context.get("stay", True),
+            "deviceType": context.get("deviceType", "Browser"),
+            "deviceName": context.get("deviceName", "Mac OS-Safari"),
+        }
+        self.login_response = {
+            **data,
+            "twofaRequired": True,
+            "twofaSetupRequired": False,
+        }
+        return self.login_response
+
+    def _handle_twofa_setup_challenge(self, data, context):
+        """保存强制2FA绑定挑战上下文"""
+        self.twofa_pending = {
+            "accessToken": data["accessToken"],
+            "username": context.get("username"),
+            "stay": context.get("stay", True),
+            "deviceType": context.get("deviceType", "Browser"),
+            "deviceName": context.get("deviceName", "Mac OS-Safari"),
+        }
+        self.login_response = {
+            **data,
+            "twofaRequired": False,
+            "twofaSetupRequired": True,
+        }
+        return self.login_response
+
+    async def connect(self, endpoint, timeout: float = 3.0, use_ssl: bool = False, skip_ssl_verify: bool = True):
+        """连接到WebSocket服务器
+        
+        Args:
+            endpoint: 服务器地址，可以是 "host:port" 格式或带协议前缀 "ws://host:port" / "wss://host:port"
+            timeout: 连接超时时间（秒）
+            use_ssl: 是否使用 SSL/WSS 连接（默认 False）
+            skip_ssl_verify: 是否跳过 SSL 证书验证（默认 True）
+        """
+        try:
+            logger.info("正在连接到WebSocket服务器...")
+            # 解析 endpoint，处理协议前缀
+            parsed_endpoint, actual_use_ssl = self._parse_endpoint(endpoint, use_ssl)
+            
+            # 保存连接信息用于重连
+            self.endpoint = parsed_endpoint
+            self.use_ssl = actual_use_ssl
+            self.skip_ssl_verify = skip_ssl_verify
+            
+            # 根据 use_ssl 选择协议
+            protocol = "wss" if actual_use_ssl else "ws"
+            uri = f"{protocol}://{parsed_endpoint}/websocket?type={self.type}"
+            
+            # 配置 SSL 上下文
+            ssl_context = None
+            if actual_use_ssl:
+                ssl_context = ssl.create_default_context()
+                if skip_ssl_verify:
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
+            
+            # 创建WebSocket连接
+            try:
+                self.ws = await websockets.connect(uri, ssl=ssl_context)
+            except InvalidURI as error:
+                https_required_error = self._https_required_error(
+                    error,
+                    requested_uri=uri,
+                    actual_use_ssl=actual_use_ssl,
+                )
+                if https_required_error is not None:
+                    raise https_required_error from error
+                raise
+            logger.debug("websockets.connect returned")
+
+            logger.debug("Creating async message handler...")
+            # 启动消息处理任务
+            self.message_task = asyncio.create_task(self._message_handler())
+            logger.debug("Async message handler task created")
+
+            # 创建一个Future对象来等待连接完成
+            self.connect_future = asyncio.Future()
+
+            logger.debug("Sending first request...")
+            # 发送第一个请求获取RSA公钥
+            await self._send_first_request()
+            logger.debug("First request sent")
+
+            # 等待连接完成（最多等待指定的超时时间）
+            try:
+                await asyncio.wait_for(self.connect_future, timeout=timeout)
+                return True
+            except asyncio.TimeoutError:
+                raise Exception("连接超时")
+
+        except Exception as e:
+            logger.error(f"连接失败: {e}")
+            self.connected = False
+            raise
+
+    async def _send_message(self, message):
+        """发送消息到服务器"""
+        if self.ws:  # 只需要检查WebSocket连接存在，不需要等待连接完全建立
+            message_json = json.dumps(message)
+            logger.debug(f"Sending message: {message_json}")
+            await self.ws.send(message_json)
+
+    async def _message_handler(self):
+        """处理接收到的消息"""
+        try:
+            async for message in self.ws:
+                # 首先调用外部回调函数（如果存在）
+                if self.on_message_callback:
+                    try:
+                        self.on_message_callback(message)
+                    except Exception as e:
+                        logger.warning(f"外部消息回调函数出错: {e}")
+
+                await self._process_message(message)
+        except websockets.exceptions.ConnectionClosed:
+            logger.debug("WebSocket连接已关闭")
+            self.connected = False
+            self.stop_heartbeat = True
+        except Exception as e:
+            logger.error(f"消息处理错误: {e}")
+
+    async def _process_message(self, message):
+        """处理接收到的消息"""
+        try:
+            data = json.loads(message)
+            if "pub" in data and "reqid" in data:
+                # 这是第一个请求的响应（获取RSA公钥）
+                self.public_key = data["pub"]
+                self.session_id = data["si"]
+                logger.debug(f"已获取RSA公钥: {data['pub']}")
+                logger.debug(f"会话ID: {data['si']}")
+                # 设置连接状态为已连接
+                self.connected = True
+                logger.info("WebSocket连接已建立")
+                # 设置连接future完成
+                if hasattr(self, 'connect_future') and not self.connect_future.done():
+                    self.connect_future.set_result(True)
+                # 发送第二个请求
+                await self._send_second_request()
+            elif "reqid" in data and data.get("req") == "appcgi.sysinfo.getHostName" and data.get("result") == "succ":
+                # 先检查是否是待处理请求
+                reqid = data["reqid"]
+                if reqid in self.pending_requests:
+                    req_data = self.pending_requests[reqid]
+                    del self.pending_requests[reqid]
+                    if not req_data['future'].done():
+                        req_data['future'].set_result(data)
+                    logger.debug(f"收到getHostName请求的响应: {reqid}")
+                else:
+                    # 如果不是待处理请求，保存主机名信息并启动心跳
+                    if "data" in data and "hostName" in data["data"]:
+                        self.host_name = data["data"]["hostName"]
+                        self.trim_version = data["data"]["trimVersion"]
+                        logger.debug(f"主机名: {self.host_name}")
+                        logger.debug(f"Trim版本: {data['data']['trimVersion']}")
+                        # 启动心跳机制
+                        await self._start_heartbeat()
+            elif "res" in data and data["res"] == "pong":
+                # 这是心跳响应
+                logger.debug("收到心跳响应: pong")
+            elif self._is_final_login_success(data):
+                twofa_future = self.twofa_future
+                twofa_reqid = self.twofa_reqid
+                self._handle_final_login_success(data)
+                logger.debug(f"服务器返回的secret: {self.decrypted_secret}")
+                if twofa_future and twofa_reqid and data.get("reqid") == twofa_reqid:
+                    if not twofa_future.done():
+                        twofa_future.set_result(data)
+                if self.login_future and not self.login_future.done():
+                    self.login_future.set_result(self.login_response)
+            elif self._is_twofa_challenge(data):
+                self._handle_twofa_challenge(data, self.login_context)
+                if self.login_future and not self.login_future.done():
+                    self.login_future.set_result(self.login_response)
+            elif self._is_twofa_setup_challenge(data):
+                self._handle_twofa_setup_challenge(data, self.login_context)
+                if self.login_future and not self.login_future.done():
+                    self.login_future.set_result(self.login_response)
+            elif (
+                "result" in data
+                and data["result"] == "fail"
+                and self.twofa_reqid
+                and "reqid" in data
+                and data["reqid"] == self.twofa_reqid
+            ):
+                if self.twofa_future and not self.twofa_future.done():
+                    self.twofa_future.set_result(data)
+                logger.error(f"两步验证失败: {data.get('msg', data.get('errmsg', '未知错误'))}")
+            elif "result" in data and data["result"] == "fail" and self.login_reqid and "reqid" in data and data["reqid"] == self.login_reqid:
+                # 登录失败 - 只有reqid匹配登录请求的响应才处理为登录失败
+                self.login_response = data
+                if self.login_future and not self.login_future.done():
+                    self.login_future.set_result(self.login_response)
+                logger.error(f"登录失败: {data.get('msg', data.get('errmsg', '未知错误'))}")
+            else:
+                # 检查消息中是否包含reqid，这可能是待处理请求的响应
+                if "reqid" in data:
+                    reqid = data["reqid"]
+                    if reqid in self.pending_requests:
+                        req_data = self.pending_requests[reqid]
+                        # 从待处理请求中移除
+                        del self.pending_requests[reqid]
+                        # 设置响应结果
+                        if not req_data['future'].done():
+                            req_data['future'].set_result(data)
+                        logger.debug(f"收到待处理请求的响应: {reqid}")
+                    else:
+                        logger.warning(f"收到未知请求ID的响应: {reqid}")
+                else:
+                    # 检查是否有待处理的请求在等待这个响应
+                    # 这里我们简单地将所有其他消息视为请求响应
+                    # 在实际应用中，可能需要更复杂的匹配机制
+                    for req_id, req_data in list(self.pending_requests.items()):
+                        req_data['response'] = message
+                        if not req_data['future'].done():
+                            req_data['future'].set_result(message)
+                        break
+                    logger.warning(f"收到未知消息: {message}")
+        except json.JSONDecodeError:
+            # 如果不是JSON格式，检查是否有待处理的请求在等待这个响应
+            for req_id, req_data in list(self.pending_requests.items()):
+                req_data['response'] = message
+                if not req_data['future'].done():
+                    req_data['future'].set_result(message)
+                break
+            logger.error(f"无法解析消息: {message}")
+
+    async def _send_first_request(self):
+        """发送第一个请求获取RSA公钥"""
+        reqid = self._generate_reqid()
+        message = {
+            "reqid": reqid,
+            "req": "util.crypto.getRSAPub"
+        }
+        await self._send_message(message)
+
+    async def _send_second_request(self):
+        """发送第二个请求获取主机名"""
+        reqid = self._generate_reqid()
+        message = {
+            "reqid": reqid,
+            "req": "appcgi.sysinfo.getHostName"
+        }
+        await self._send_message(message)
+
+    async def _start_heartbeat(self):
+        """启动心跳机制"""
+        async def heartbeat_worker():
+            while not self.stop_heartbeat:
+                await asyncio.sleep(30)  # 每30秒发送一次
+                if self.connected:
+                    message = {
+                        "req": "ping"
+                    }
+                    await self._send_message(message)
+                    logger.debug("已发送心跳请求")
+
+        # 启动心跳任务
+        self.heartbeat_task = asyncio.create_task(heartbeat_worker())
+
+    async def login(
+        self,
+        username,
+        password,
+        timeout: float = 10.0,
+        stay: bool = True,
+        device_type: str = "Browser",
+        device_name: str = "Mac OS-Safari",
+    ):
+        """用户登录方法"""
+        if not self.connected:
+            raise NotConnectedError("未连接到服务器")
+
+        if not self.public_key or not self.session_id:
+            raise Exception("未获取到公钥或会话ID")
+
+        # 保存用户名和密码用于重连
+        self.username = username
+        self.password = password
+        self.login_context = {
+            "username": username,
+            "stay": stay,
+            "deviceType": device_type,
+            "deviceName": device_name,
+        }
+
+        # 加密登录数据
+        encrypted_data = self._encrypt_login_data(
+            username,
+            password,
+            stay=stay,
+            device_type=device_type,
+            device_name=device_name,
+        )
+        logger.debug(f"Sending login request: {encrypted_data}")
+
+        # 发送登录请求并等待响应
+        self.login_future = asyncio.Future()
+        await self._send_message(encrypted_data)
+
+        # 等待登录响应（最多等待指定的超时时间）
+        try:
+            await asyncio.wait_for(self.login_future, timeout=timeout)
+            # 登录完成后清理login_reqid
+            self.login_reqid = None
+            return self.login_response
+        except asyncio.TimeoutError:
+            # 超时也要清理login_reqid
+            self.login_reqid = None
+            raise Exception("登录超时")
+
+    async def submit_twofa_code(self, code: str, trust_device: bool = False, timeout: float = 10.0):
+        """提交两步验证码完成登录"""
+        if not self.connected:
+            raise NotConnectedError("未连接到服务器")
+
+        if not self.public_key or not self.session_id:
+            raise Exception("未获取到公钥或会话ID")
+
+        if not self.twofa_pending:
+            raise Exception("没有待完成的两步验证登录")
+
+        if not re.fullmatch(r"\d{6}", code):
+            raise ValueError("两步验证码必须是6位数字")
+
+        reqid = self._generate_reqid()
+        payload = {
+            "reqid": reqid,
+            "code": code,
+            "isTrustedDevice": trust_device,
+            "accessToken": self.twofa_pending["accessToken"],
+            "stay": int(bool(self.twofa_pending.get("stay", True))),
+            "deviceName": self.twofa_pending.get("deviceName", "Mac OS-Safari"),
+            "deviceType": self.twofa_pending.get("deviceType", "Browser"),
+            "did": self._generate_did(),
+            "req": "user.2fa.loginVerify",
+            "si": self.session_id,
+        }
+
+        self.twofa_reqid = reqid
+        self.twofa_future = asyncio.Future()
+
+        encrypted_data = self._encrypt_auth_data(payload)
+        logger.debug(f"Sending 2FA verification request: {encrypted_data}")
+        await self._send_message(encrypted_data)
+
+        try:
+            response = await asyncio.wait_for(self.twofa_future, timeout=timeout)
+            self.twofa_reqid = None
+            self.twofa_future = None
+            return response
+        except asyncio.TimeoutError:
+            self.twofa_reqid = None
+            self.twofa_future = None
+            raise Exception("两步验证超时")
+
+    async def login_via_token(self, token, long_token, secret, timeout: float = 10.0):
+        """使用token登录方法"""
+        if not self.connected:
+            raise NotConnectedError("未连接到服务器")
+
+        if not self.public_key or not self.session_id:
+            raise Exception("未获取到公钥或会话ID")
+
+        # 保存 token 用于重连
+        self.token = token
+        self.long_token = long_token
+        self.decrypted_secret = secret
+
+        # 使用 token 登录
+        payload = {"main": True, "token": token, "si": self.session_id}
+        response = await self.request_payload_with_response("user.authToken", payload, timeout)
+
+        # 登录失败，使用 long_token 登录
+        if response.get("errno") == 135168:
+            logger.debug("使用 long_token 登录")
+            payload = {
+                "deviceType": "Browser",
+                "deviceName": "Mac OS-Safari",
+                "did": self._generate_did(),
+                "si": self.session_id,
+                "token": self.long_token,
+            }
+            response = await self.request_payload_with_response("user.tokenLogin", payload, timeout)
+            if response.get("token"):
+                self.token = response["token"]
+        return response
+
+    def get_decrypted_secret(self):
+        """获取解密后的secret"""
+        return self.decrypted_secret
+
+    def on_message(self, callback):
+        """设置消息回调函数"""
+        self.on_message_callback = callback
+
+    def _iz(self, data):
+        """实现HMAC-SHA256加密函数"""
+        if not self.decrypted_secret:
+            raise Exception("未获取到secret")
+
+        # 解码base64格式的secret
+        key = base64.b64decode(self.decrypted_secret)
+
+        # 计算HMAC-SHA256
+        hmac_result = hmac.new(key, data.encode('utf-8'), hashlib.sha256).digest()
+
+        # 返回base64编码的结果
+        return base64.b64encode(hmac_result).decode('utf-8')
+
+    async def request(self, e):
+        """发送请求"""
+        if not self.connected:
+            raise NotConnectedError("未连接到服务器")
+
+        if not self.decrypted_secret:
+            raise Exception("未获取到secret")
+
+        # 计算iz(e) + e
+        logger.debug(f"Sending msg: {e}")
+        iz_result = self._iz(e)
+        logger.debug(f"Calculated iz-result: {iz_result}")
+        request_data = iz_result + e
+        logger.debug(f"Sending msg to channel: {request_data}")
+
+        # 发送数据
+        await self.ws.send(request_data)
+        logger.debug(f"已发送请求: {request_data}")
+
+    async def request_payload(self, req: str, payload: dict):
+        """以payload为主体，添加req和reqid后发送请求"""
+        if not self.connected:
+            raise NotConnectedError("未连接到服务器")
+
+        # 将req以key=req放进去
+        payload_data = payload.copy()  # 创建副本避免修改原始数据
+        payload_data["req"] = req
+
+        # 生成请求ID以key="reqid"放进去
+        reqid = self._generate_reqid()
+        payload_data["reqid"] = reqid
+
+        # JSON序列化之后访问request()方法完成发送
+        json_data = json.dumps(payload_data, separators=(',', ':'))
+        await self.request(json_data)
+
+        return reqid
+
+    async def request_payload_with_response(self, req: str, payload: dict, timeout: float = 10.0):
+        """以payload为主体，添加req和reqid后发送请求，并返回响应"""
+        if not self.connected:
+            raise NotConnectedError("未连接到服务器")
+
+        # 创建一个Future对象来等待响应
+        future = asyncio.Future()
+
+        # 将请求添加到待处理请求列表
+        reqid = self._generate_reqid()
+        self.pending_requests[reqid] = {
+            'future': future,
+            'req': req,
+            'payload': payload
+        }
+
+        # 构造请求数据
+        payload_data = payload.copy()  # 创建副本避免修改原始数据
+        payload_data["req"] = req
+        payload_data["reqid"] = reqid
+
+        # JSON序列化之后访问request()方法完成发送
+        json_data = json.dumps(payload_data, separators=(',', ':'), ensure_ascii=False)
+        await self.request(json_data)
+
+        # 等待响应（最多等待指定的超时时间）
+        try:
+            response = await asyncio.wait_for(future, timeout=timeout)
+            return response
+        except asyncio.TimeoutError:
+            raise Exception(f"请求 {req} 超时")
+
+    async def reconnect(self, connect_timeout: float = 3.0, login_timeout: float = 10.0):
+        """重连方法：在connected==False的前提下，先用存的endpoint做connect()，成功后用存的用户名和密码做login()"""
+        if self.connected:
+            logger.info("已经连接，无需重连")
+            return True
+
+        if not self.endpoint:
+            raise Exception("没有保存的endpoint用于重连")
+
+        if not self.username or not self.password:
+            raise Exception("没有保存的用户名和密码用于重连")
+
+        logger.info("开始重连...")
+
+        # 先连接（connect方法现在会等待连接完成）
+        await self.connect(self.endpoint, timeout=connect_timeout)
+
+        # 再登录
+        login_result = await self.login(self.username, self.password, timeout=login_timeout)
+
+        if login_result and login_result.get("result") == "succ":
+            logger.info("重连成功")
+            return True
+        else:
+            raise Exception("重连失败：登录失败")
+
+    async def close(self):
+        """关闭WebSocket连接"""
+        if self.ws:
+            await self.ws.close()
+            self.connected = False
+        if self.heartbeat_task:
+            self.heartbeat_task.cancel()
+        if hasattr(self, 'message_task'):
+            self.message_task.cancel()
