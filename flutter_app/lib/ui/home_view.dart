@@ -206,7 +206,11 @@ class _SearchResults extends StatelessWidget {
                     active: audio.trackId == track.id,
                     playing: audio.trackId == track.id && audio.playing,
                     showAlbum: wide,
-                    onTap: () => model.playFrom(result.tracks, index),
+                    onTap: () => model.playFrom(
+                      result.tracks,
+                      index,
+                      source: '搜索结果',
+                    ),
                   ),
               ],
             ),

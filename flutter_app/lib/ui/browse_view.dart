@@ -286,7 +286,13 @@ class _Body extends StatelessWidget {
           active: audio.trackId == track.id,
           playing: audio.trackId == track.id && audio.playing,
           showAlbum: wide,
-          onTap: () => model.playFrom(tracks, index),
+          onTap: () => model.playFrom(
+            tracks,
+            index,
+            source: model.section == Section.favorites
+                ? '我喜欢的音乐'
+                : model.section.label,
+          ),
           onToggleFavorite: () => model.toggleFavorite(track),
         );
       },

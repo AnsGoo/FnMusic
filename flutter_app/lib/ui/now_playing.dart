@@ -18,6 +18,7 @@ import '../state/app_model.dart';
 import 'cast_sheet.dart' show showCastSheet;
 import 'controls.dart';
 import 'lyrics_view.dart';
+import 'queue_sheet.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -96,17 +97,41 @@ class _NowPlayingPageState extends State<NowPlayingPage>
                               // lyrics, the way the web player does below
                               // 768px.
                               if (constraints.maxWidth < 720) {
+                                // On a very short viewport (landscape phone,
+                                // split screen) the lyrics panel cannot fit
+                                // its empty-state hint alongside the disc and
+                                // the two-row transport. Drop the panel and
+                                // give that space back to the cover.
+                                const coverFlex = 6;
+                                const lyricsFlex = 4;
+                                final lyricsHeight =
+                                    (constraints.maxHeight - 8) *
+                                    lyricsFlex /
+                                    (coverFlex + lyricsFlex);
+                                final showLyrics = lyricsHeight >= 140;
                                 return Column(
                                   children: [
-                                    Flexible(
-                                      flex: 4,
-                                      child: _coverColumn(model, audio),
-                                    ),
-                                    const SizedBox(height: 8),
+                                    // The transport gained a second button
+                                    // row on phones, so give the disc a
+                                    // little more room back. Tight (Expanded)
+                                    // constraints let the disc measure the
+                                    // space left after the credits instead of
+                                    // overflowing its own column.
                                     Expanded(
-                                      flex: 5,
-                                      child: _lyricsColumn(model),
+                                      flex: coverFlex,
+                                      child: _coverColumn(
+                                        model,
+                                        audio,
+                                        compact: true,
+                                      ),
                                     ),
+                                    if (showLyrics) ...[
+                                      const SizedBox(height: 8),
+                                      Expanded(
+                                        flex: lyricsFlex,
+                                        child: _lyricsColumn(model),
+                                      ),
+                                    ],
                                   ],
                                 );
                               }
@@ -160,10 +185,41 @@ class _NowPlayingPageState extends State<NowPlayingPage>
     );
   }
 
-  Widget _coverColumn(AppModel model, PlaybackState audio) {
-    final track = model.currentTrack;
+  Widget _coverColumn(
+    AppModel model,
+    PlaybackState audio, {
+    bool compact = false,
+  }) {
+    if (compact) {
+      // On a phone the disc must yield to the credits. Sizing it as a fixed
+      // fraction (0.72) of this column left no room for the title / artist /
+      // album lines below and rendered the "BOTTOM OVERFLOWED BY ... PIXELS"
+      // stripe. Let Expanded measure the space the credits leave instead.
+      return Column(
+        children: [
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final size = [
+                  constraints.maxWidth * 0.78,
+                  constraints.maxHeight - 4,
+                  300.0,
+                ].reduce((a, b) => a < b ? a : b);
+                return Center(
+                  child: size > 0
+                      ? _disc(model, audio, size)
+                      : const SizedBox.shrink(),
+                );
+              },
+            ),
+          ),
+          _credits(model, audio, gap: 20),
+        ],
+      );
+    }
     return LayoutBuilder(
       builder: (context, constraints) {
+        // Desktop's two-column layout keeps the smaller, lyric-friendly size.
         final size = [
           constraints.maxWidth * 0.62,
           constraints.maxHeight * 0.56,
@@ -172,51 +228,67 @@ class _NowPlayingPageState extends State<NowPlayingPage>
         return Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _Disc(
-              rotation: _spin,
-              child: CoverImage(
-                url: model.coverUrl(audio.coverId, size: 640),
-                size: size,
-                circular: true,
-                iconSize: size * 0.28,
-              ),
-            ),
-            const SizedBox(height: 28),
-            Text(
-              audio.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Mf.text,
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 7),
-            Text(
-              audio.error ?? track?.artistLine ?? audio.subtitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: audio.error != null ? Mf.accent : Mf.muted,
-                fontSize: 13,
-              ),
-            ),
-            if (track?.album?.name case final album? when album.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                album,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Mf.faint, fontSize: 12),
-              ),
-            ],
+            _disc(model, audio, size),
+            _credits(model, audio, gap: 28),
           ],
         );
       },
+    );
+  }
+
+  Widget _disc(AppModel model, PlaybackState audio, double size) {
+    return _Disc(
+      rotation: _spin,
+      child: CoverImage(
+        url: model.coverUrl(audio.coverId, size: 640),
+        size: size,
+        circular: true,
+        iconSize: size * 0.28,
+      ),
+    );
+  }
+
+  /// Fixed-height text block under the disc. Kept out of the flex sizing so
+  /// the disc can never push it past the bottom of the column.
+  Widget _credits(AppModel model, PlaybackState audio, {required double gap}) {
+    final track = model.currentTrack;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(height: gap),
+        Text(
+          audio.title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Mf.text,
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 7),
+        Text(
+          audio.error ?? track?.artistLine ?? audio.subtitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: audio.error != null ? Mf.accent : Mf.muted,
+            fontSize: 13,
+          ),
+        ),
+        if (track?.album?.name case final album? when album.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            album,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Mf.muted, fontSize: 12),
+          ),
+        ],
+      ],
     );
   }
 
@@ -236,11 +308,20 @@ class _NowPlayingPageState extends State<NowPlayingPage>
     final durationSeconds = duration.inMilliseconds / 1000;
     final position =
         _scrubSeconds ?? (audio.position.inMilliseconds / 1000).clamp(0.0, 1e9);
+    // Five controls plus a volume slider cannot breathe on a phone in
+    // portrait. Split them into a primary transport row and a quieter
+    // utility row, the way mobile players do.
+    final stacked = MediaQuery.sizeOf(context).width < 560;
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(32, 12, 32, 26),
+          padding: EdgeInsets.fromLTRB(
+            stacked ? 20 : 32,
+            12,
+            stacked ? 20 : 32,
+            stacked ? 18 : 26,
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -298,70 +379,278 @@ class _NowPlayingPageState extends State<NowPlayingPage>
                 ],
               ),
               const SizedBox(height: 10),
-              SizedBox(
-                height: 64,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // Centred on the transport itself, not on the space the
-                    // volume slider leaves behind.
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        MfIconButton(
-                          icon: Icons.skip_previous_rounded,
-                          size: 44,
-                          glyph: 24,
-                          tooltip: '上一首',
-                          onTap: model.previous,
+              if (stacked) ...[
+                _primaryRow(model, audio, spaced: true),
+                const SizedBox(height: 18),
+                _utilityRow(model),
+              ] else
+                SizedBox(
+                  height: 64,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      _primaryRow(model, audio, spaced: false),
+                      if (!isMobilePlatform)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: _volumeSlider(model),
                         ),
-                        const SizedBox(width: 14),
-                        _PlayButton(
-                          playing: audio.playing,
-                          onTap: model.togglePlay,
-                        ),
-                        const SizedBox(width: 14),
-                        MfIconButton(
-                          icon: Icons.skip_next_rounded,
-                          size: 44,
-                          glyph: 24,
-                          tooltip: '下一首',
-                          onTap: model.next,
-                        ),
-                      ],
-                    ),
-                    // Desktop only: touch devices use the hardware volume
-                    // keys instead of an on-screen slider.
-                    if (!isMobilePlatform)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.volume_up_rounded,
-                              size: 16,
-                              color: Mf.faint,
-                            ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: 104,
-                              child: MfScrubber(
-                                fraction: model.volume,
-                                thumbColor: Mf.textSoft,
-                                activeColor: Mf.muted,
-                                onScrub: model.setVolume,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The five main controls: play mode, previous, play/pause, next, queue.
+  Widget _primaryRow(
+    AppModel model,
+    PlaybackState audio, {
+    required bool spaced,
+  }) {
+    final buttons = <Widget>[
+      MfIconButton(
+        icon: playModeIcon(model.playMode),
+        size: 44,
+        glyph: 22,
+        tooltip: playModeLabel(model.playMode),
+        onTap: model.cyclePlayMode,
+      ),
+      MfIconButton(
+        icon: Icons.skip_previous_rounded,
+        size: 44,
+        glyph: 26,
+        tooltip: '上一首',
+        onTap: model.previous,
+      ),
+      _PlayButton(playing: audio.playing, onTap: model.togglePlay),
+      MfIconButton(
+        icon: Icons.skip_next_rounded,
+        size: 44,
+        glyph: 26,
+        tooltip: '下一首',
+        onTap: model.next,
+      ),
+      MfIconButton(
+        icon: Icons.queue_music_rounded,
+        size: 44,
+        glyph: 22,
+        tooltip: '播放列表',
+        onTap: () => showQueueSheet(context),
+      ),
+    ];
+    if (spaced) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: buttons,
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < buttons.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          buttons[i],
+        ],
+      ],
+    );
+  }
+
+  /// Second row on phones: quieter, smaller, and every button does something
+  /// real rather than being an inert "more" placeholder.
+  Widget _utilityRow(AppModel model) {
+    final track = model.currentTrack;
+    final favorite = track?.isFavorite ?? false;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        MfIconButton(
+          icon: favorite
+              ? Icons.favorite_rounded
+              : Icons.favorite_border_rounded,
+          size: 40,
+          glyph: 19,
+          color: favorite ? Mf.accent : null,
+          tooltip: favorite ? '取消收藏' : '收藏',
+          onTap: () {
+            if (track != null) model.toggleFavorite(track);
+          },
+        ),
+        MfIconButton(
+          icon: Icons.info_outline_rounded,
+          size: 40,
+          glyph: 19,
+          tooltip: '歌曲信息',
+          onTap: () => _showTrackInfo(model),
+        ),
+        MfIconButton(
+          icon: Icons.volume_up_rounded,
+          size: 40,
+          glyph: 19,
+          tooltip: '音量',
+          onTap: () => _showVolumeSheet(model),
+        ),
+        MfIconButton(
+          icon: model.casting
+              ? Icons.cast_connected_rounded
+              : Icons.cast_outlined,
+          size: 40,
+          glyph: 19,
+          color: model.casting ? Mf.accentHover : null,
+          tooltip: model.casting ? '正在投屏' : '投屏',
+          onTap: () => showCastSheet(context),
+        ),
+      ],
+    );
+  }
+
+  Widget _volumeSlider(AppModel model) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.volume_up_rounded, size: 16, color: Mf.faint),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 104,
+          child: MfScrubber(
+            fraction: model.volume,
+            thumbColor: Mf.textSoft,
+            activeColor: Mf.muted,
+            onScrub: model.setVolume,
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showVolumeSheet(AppModel model) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Mf.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 18, 24, 26),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '音量',
+                style: TextStyle(
+                  color: Mf.text,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.volume_down_rounded,
+                    size: 18,
+                    color: Mf.muted,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: AnimatedBuilder(
+                      animation: model,
+                      builder: (_, _) => MfScrubber(
+                        fraction: model.volume,
+                        thumbColor: Mf.textSoft,
+                        activeColor: Mf.accent,
+                        onScrub: model.setVolume,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Icon(
+                    Icons.volume_up_rounded,
+                    size: 18,
+                    color: Mf.muted,
+                  ),
+                ],
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  void _showTrackInfo(AppModel model) {
+    final track = model.currentTrack;
+    if (track == null) return;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Mf.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 26),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                track.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Mf.text,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                track.artistLine,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Mf.muted, fontSize: 12.5),
+              ),
+              const SizedBox(height: 14),
+              const Divider(height: 1, color: Mf.border),
+              const SizedBox(height: 8),
+              _infoRow('专辑', track.album?.name),
+              _infoRow('时长', track.durationLabel),
+              _infoRow('格式', track.format?.toUpperCase()),
+              _infoRow('来自', model.queueSource),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _infoRow(String label, String? value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 56,
+            child: Text(
+              label,
+              style: const TextStyle(color: Mf.muted, fontSize: 12.5),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              (value == null || value.isEmpty) ? '—' : value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Mf.textSoft, fontSize: 12.5),
+            ),
+          ),
+        ],
       ),
     );
   }

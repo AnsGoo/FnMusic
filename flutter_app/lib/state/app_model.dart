@@ -6,6 +6,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math';
 
 import 'package:dart_cast/dart_cast.dart' hide ServerInfo;
 import 'package:flutter/foundation.dart';
@@ -26,6 +27,10 @@ import 'cast_audio_session.dart';
 enum _ProbeOutcome { reachable, authExpired, unreachable }
 
 enum Section { home, tracks, albums, artists, playlists, favorites }
+
+/// How the queue advances when a song ends. [sequential] is the original
+/// behaviour (play to the end and stop); the queue panel offers the rest.
+enum PlayMode { sequential, loopAll, loopOne, shuffle }
 
 extension SectionInfo on Section {
   String get label => switch (this) {
@@ -235,6 +240,16 @@ class AppModel extends ChangeNotifier {
 
   List<Track> _queue = const [];
   int _queueIndex = -1;
+  PlayMode _playMode = PlayMode.sequential;
+
+  /// Where this queue came from ("我喜欢的音乐" / an album / a playlist),
+  /// shown as the "来自：…" line in the queue sheet.
+  String? _queueSource;
+
+  /// Most recently started tracks, newest first, de-duplicated by id.
+  List<Track> _history = const [];
+  static const _historyLimit = 100;
+  final Random _random = Random();
 
   int _page = 0;
   int _total = 0;
@@ -336,6 +351,9 @@ class AppModel extends ChangeNotifier {
   SearchAll get homeSearch => _homeSearch;
   List<Track> get queue => _queue;
   int get queueIndex => _queueIndex;
+  PlayMode get playMode => _playMode;
+  String? get queueSource => _queueSource;
+  List<Track> get history => _history;
   Lyrics? get lyrics => _lyrics;
   bool get lyricsLoading => _lyricsLoading;
   bool get lyricsVisible => _lyricsVisible;
@@ -512,6 +530,9 @@ class AppModel extends ChangeNotifier {
     _clearSearchResults();
     _queue = const [];
     _queueIndex = -1;
+    _queueSource = null;
+    _history = const [];
+    _playMode = PlayMode.sequential;
     _section = Section.home;
     _lyrics = null;
     _lyricsVisible = false;
@@ -1768,7 +1789,7 @@ class AppModel extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      await playFrom(all, 0);
+      await playFrom(all, 0, source: detail.title);
     } on MusicFreeException catch (failure) {
       _detail = _detail?.copyWith(loading: false);
       _error = failure.message;
@@ -1778,28 +1799,152 @@ class AppModel extends ChangeNotifier {
 
   // ---- Playback -----------------------------------------------------------
 
-  Future<void> playFrom(List<Track> list, int index) async {
+  /// Replaces the queue with [list]. [source] is only a label for the queue
+  /// sheet; when omitted we infer the open detail page or the current section.
+  Future<void> playFrom(List<Track> list, int index, {String? source}) async {
     if (index < 0 || index >= list.length) return;
     _queue = List<Track>.from(list);
     _queueIndex = index;
+    _queueSource = source ?? _detail?.title ?? _section.label;
     _failedSkips = 0;
     await _startTrack(list[index]);
   }
 
-  Future<void> next() async {
-    if (_queue.isEmpty) return;
-    if (_queueIndex >= _queue.length - 1) return;
-    _queueIndex += 1;
+  /// Manual "next" (transport / media buttons) keeps its no-argument signature
+  /// because MfMediaSession.bind takes it as a tear-off.
+  Future<void> next() => _advance(auto: false);
+
+  /// [auto] is true when a song finished on its own: in that case single-track
+  /// loop replays the same song instead of moving on.
+  Future<void> _advance({required bool auto}) async {
+    if (_queue.isEmpty || _queueIndex < 0) return;
+    final target = auto && _playMode == PlayMode.loopOne
+        ? _queueIndex
+        : _nextIndex();
+    if (target == null) return;
+    _queueIndex = target;
     _failedSkips = 0;
     await _startTrack(_queue[_queueIndex]);
   }
 
+  /// Sequential is the original behaviour: the last song ends and playback
+  /// stops. The looping modes wrap, shuffle picks any other row.
+  int? _nextIndex() {
+    final length = _queue.length;
+    if (length == 1) {
+      return _playMode == PlayMode.loopAll || _playMode == PlayMode.loopOne
+          ? 0
+          : null;
+    }
+    if (_playMode == PlayMode.shuffle) {
+      var candidate = _random.nextInt(length);
+      if (candidate == _queueIndex) candidate = (candidate + 1) % length;
+      return candidate;
+    }
+    final target = _queueIndex + 1;
+    return target >= length
+        ? (_playMode == PlayMode.loopAll ? 0 : null)
+        : target;
+  }
+
   Future<void> previous() async {
-    if (_queue.isEmpty) return;
-    if (_queueIndex <= 0) return;
-    _queueIndex -= 1;
+    if (_queue.isEmpty || _queueIndex < 0) return;
+    final target = _queueIndex > 0
+        ? _queueIndex - 1
+        : (_playMode == PlayMode.loopAll ? _queue.length - 1 : null);
+    if (target == null) return;
+    _queueIndex = target;
     _failedSkips = 0;
     await _startTrack(_queue[_queueIndex]);
+  }
+
+  /// Plays a row picked in the queue sheet without rebuilding the queue (so
+  /// the "来自：…" label and the remaining up-next songs survive).
+  Future<void> playQueueAt(int index) async {
+    if (index < 0 || index >= _queue.length) return;
+    _queueIndex = index;
+    _failedSkips = 0;
+    notifyListeners();
+    await _startTrack(_queue[index]);
+  }
+
+  void setPlayMode(PlayMode mode) {
+    if (_playMode == mode) return;
+    _playMode = mode;
+    notifyListeners();
+  }
+
+  void cyclePlayMode() => setPlayMode(
+    switch (_playMode) {
+      PlayMode.sequential => PlayMode.loopAll,
+      PlayMode.loopAll => PlayMode.loopOne,
+      PlayMode.loopOne => PlayMode.shuffle,
+      PlayMode.shuffle => PlayMode.sequential,
+    },
+  );
+
+  /// Removes one row. Deleting the song that is playing advances to whatever
+  /// is now at that position; emptying the queue stops playback.
+  Future<void> removeFromQueue(int index) async {
+    if (index < 0 || index >= _queue.length) return;
+    final removingCurrent = index == _queueIndex;
+    final updated = List<Track>.from(_queue)..removeAt(index);
+    _queue = updated;
+    if (updated.isEmpty) {
+      _queueIndex = -1;
+      _queueSource = null;
+      await player.stop();
+      notifyListeners();
+      return;
+    }
+    if (index < _queueIndex) {
+      _queueIndex -= 1;
+    } else if (removingCurrent) {
+      _queueIndex = index.clamp(0, updated.length - 1);
+      _failedSkips = 0;
+      notifyListeners();
+      await _startTrack(updated[_queueIndex]);
+      return;
+    }
+    notifyListeners();
+  }
+
+  /// ReorderableListView reports the insertion index *before* removal; keep
+  /// `_queueIndex` pointing at the same song while rows move around it.
+  void reorderQueue(int oldIndex, int newIndex) {
+    if (oldIndex < 0 || oldIndex >= _queue.length) return;
+    var target = newIndex;
+    if (target > oldIndex) target -= 1;
+    if (target < 0 || target >= _queue.length || target == oldIndex) return;
+    final updated = List<Track>.from(_queue);
+    final moved = updated.removeAt(oldIndex);
+    updated.insert(target, moved);
+    var current = _queueIndex;
+    if (oldIndex == current) {
+      current = target;
+    } else if (oldIndex < current && target >= current) {
+      current -= 1;
+    } else if (oldIndex > current && target <= current) {
+      current += 1;
+    }
+    _queue = updated;
+    if (current >= 0 && current < updated.length) _queueIndex = current;
+    notifyListeners();
+  }
+
+  Future<void> clearQueue() async {
+    if (_queue.isEmpty && _queueIndex < 0) return;
+    _queue = const [];
+    _queueIndex = -1;
+    _queueSource = null;
+    await player.stop();
+    notifyListeners();
+  }
+
+  void clearHistory() {
+    if (_history.isEmpty) return;
+    _history = const [];
+    notifyListeners();
   }
 
   /// 锁屏 / 媒体面板的「上一首 / 下一首」，只由鸿蒙 AVSession 转发通道调用。
@@ -1879,6 +2024,7 @@ class AppModel extends ChangeNotifier {
   Future<void> _startTrack(Track track) async {
     _completedGuard = false;
     _lyrics = null;
+    _noteHistory(track);
     // 用户主动开播时顺手要一次通知权限（Android 13+）：没有它，暂停后锁屏
     // 和通知栏上的播放控制器会消失。放在这里而不是启动时，避免一进 App 就弹窗。
     unawaited(MfMediaSession.ensureNotificationPermission());
@@ -1925,6 +2071,19 @@ class AppModel extends ChangeNotifier {
       _error = failure.message;
       notifyListeners();
     }
+  }
+
+  /// Newest first, one entry per song. Also feeds the "历史播放" tab of the
+  /// queue sheet, so a song picked twice never shows up twice.
+  void _noteHistory(Track track) {
+    final updated = <Track>[
+      track,
+      for (final item in _history)
+        if (item.id != track.id) item,
+    ];
+    _history = updated.length > _historyLimit
+        ? updated.sublist(0, _historyLimit)
+        : updated;
   }
 
   /// Pushes [track] to the connected renderer. Queue navigation ([next],
@@ -1985,7 +2144,7 @@ class AppModel extends ChangeNotifier {
   void _handleCompleted() {
     if (_completedGuard) return;
     _completedGuard = true;
-    unawaited(next());
+    unawaited(_advance(auto: true));
   }
 
   void setVolume(double value) {
@@ -2159,7 +2318,7 @@ class AppModel extends ChangeNotifier {
           session.position >= session.duration - const Duration(seconds: 3);
       if (nearEnd) {
         notifyListeners();
-        unawaited(next());
+        unawaited(_advance(auto: true));
         return;
       }
     }

@@ -234,4 +234,44 @@ void main() {
 
     expect(find.text('不该用情'), findsWidgets);
   });
+
+  // Regression: the portrait disc used to take a fixed 72% of its column,
+  // leaving no room for the title / artist / album lines below. Flutter then
+  // painted the "BOTTOM OVERFLOWED BY ... PIXELS" stripe over the song name.
+  // Check both phone sizes (with a status bar inset) and desktop / tiny
+  // viewports, where the two-row transport and the lyrics hint compete for
+  // the little height that is left.
+  for (final size in const <Size>[
+    Size(360, 780),
+    Size(360, 824),
+    Size(390, 844),
+    Size(320, 640),
+    Size(411, 914),
+    Size(280, 500),
+    Size(900, 500),
+    Size(1440, 900),
+  ]) {
+    testWidgets('player page does not overflow at $size', (tester) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      tester.view.padding = const FakeViewPadding(top: 30, bottom: 16);
+      addTearDown(tester.view.reset);
+
+      final model = _model();
+      await model.playFrom([
+        const Track(
+          id: 'a',
+          title: '新娘不是我',
+          artists: [Artist(id: '1', name: '四季予你')],
+          album: Album(id: '1', name: '四季予你'),
+        ),
+      ], 0);
+
+      await tester.pumpWidget(_host(model, const NowPlayingPage()));
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('新娘不是我'), findsWidgets);
+    });
+  }
 }

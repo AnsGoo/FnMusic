@@ -122,7 +122,11 @@ class _DetailViewState extends State<DetailView> {
                             height: 36,
                             onTap: detail.tracks.isEmpty
                                 ? null
-                                : () => model.playFrom(detail.tracks, 0),
+                                : () => model.playFrom(
+                                    detail.tracks,
+                                    0,
+                                    source: detail.title,
+                                  ),
                             enabled: detail.tracks.isNotEmpty,
                           ),
                         if (detail.loading) ...[
@@ -170,7 +174,11 @@ class _DetailViewState extends State<DetailView> {
                       active: audio.trackId == track.id,
                       playing: audio.trackId == track.id && audio.playing,
                       showAlbum: false,
-                      onTap: () => model.playFrom(detail.tracks, index),
+                      onTap: () => model.playFrom(
+                        detail.tracks,
+                        index,
+                        source: detail.title,
+                      ),
                       onToggleFavorite: () => model.toggleFavorite(track),
                     );
                   },

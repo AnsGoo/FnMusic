@@ -9,6 +9,7 @@ import '../data/models.dart';
 import '../state/app_model.dart';
 import 'cast_sheet.dart';
 import 'controls.dart';
+import 'queue_sheet.dart';
 import 'theme.dart';
 import 'widgets.dart';
 
@@ -76,14 +77,16 @@ class _PlayerBarState extends State<PlayerBar>
             (audio.position.inMilliseconds / 1000).clamp(0.0, 1e9);
 
         return Container(
-          decoration: const BoxDecoration(
-            color: Mf.surface,
-            border: Border(top: BorderSide(color: Mf.border)),
-          ),
+          decoration: widget.wide
+              ? const BoxDecoration(
+                  color: Mf.surface,
+                  border: Border(top: BorderSide(color: Mf.border)),
+                )
+              : null,
           padding: EdgeInsets.fromLTRB(
-            widget.wide ? 18 : 12,
-            widget.wide ? 10 : 8,
-            widget.wide ? 18 : 12,
+            widget.wide ? 18 : 10,
+            widget.wide ? 10 : 4,
+            widget.wide ? 18 : 10,
             widget.wide ? 10 : 8,
           ),
           child: widget.wide
@@ -105,7 +108,8 @@ class _PlayerBarState extends State<PlayerBar>
     // on mobile, plus the volume icon and slider (16+8+96+10) on desktop. The
     // transport buttons and the inline lyric centre over this span so they
     // line up with the scrubber.
-    final rightSpan = isMobilePlatform ? 132.0 : 262.0;
+    // +40 for the queue button (30dp + 10dp gap) added after the cast button.
+    final rightSpan = (isMobilePlatform ? 132.0 : 262.0) + 40.0;
     return Row(
       children: [
         // Like the web transport (flex: 1.2 middle): the song info and the
@@ -204,6 +208,14 @@ class _PlayerBarState extends State<PlayerBar>
                     tooltip: model.casting ? '正在投屏' : '投屏',
                     onTap: () => showCastSheet(context),
                   ),
+                  const SizedBox(width: 10),
+                  MfIconButton(
+                    icon: Icons.queue_music_rounded,
+                    size: 30,
+                    glyph: 18,
+                    tooltip: '播放列表',
+                    onTap: () => showQueueSheet(context),
+                  ),
                   if (!isMobilePlatform) ...[
                     const SizedBox(width: 10),
                     const Icon(
@@ -250,62 +262,54 @@ class _PlayerBarState extends State<PlayerBar>
     );
   }
 
+  /// A floating pill on phones. Five controls used to share this row with the
+  /// song info, leaving the title about 100dp on a 360dp screen; only play and
+  /// the queue stay here, and the removed controls live in the full player's
+  /// second button row (see now_playing.dart).
   Widget _compactLayout(
     AppModel model,
     PlaybackState audio,
     double position,
     double durationSeconds,
   ) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            Expanded(child: _nowPlaying(model, audio, 40)),
-            MfIconButton(
-              icon: Icons.skip_previous_rounded,
-              size: 30,
-              glyph: 20,
-              onTap: model.previous,
-            ),
-            _playButton(model, audio),
-            MfIconButton(
-              icon: Icons.skip_next_rounded,
-              size: 30,
-              glyph: 20,
-              onTap: model.next,
-            ),
-            _FavoriteBarButton(
-              favorite: model.currentTrack?.isFavorite ?? false,
-              visible: model.currentTrack != null,
-              onTap: () {
-                final track = model.currentTrack;
-                if (track != null) model.toggleFavorite(track);
-              },
-            ),
-            MfIconButton(
-              icon: Icons.cast_rounded,
-              size: 30,
-              glyph: 18,
-              color: model.casting ? Mf.accentHover : null,
-              tooltip: model.casting ? '正在投屏' : '投屏',
-              onTap: () => showCastSheet(context),
-            ),
-          ],
-        ),
-        const SizedBox(height: 2),
-        // A childless CustomPaint collapses to zero width in loose
-        // constraints, so give the scrubber a tight row or it renders as a
-        // lone dot (most visible in landscape, where this bar shows alone).
-        SizedBox(
-          height: 18,
-          child: Row(
+    return Container(
+      decoration: BoxDecoration(
+        color: Mf.surfaceAlt,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Mf.border.withValues(alpha: 0.8)),
+      ),
+      padding: const EdgeInsets.fromLTRB(8, 7, 8, 3),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
             children: [
-              Expanded(child: _scrubber(model, position, durationSeconds)),
+              Expanded(child: _nowPlaying(model, audio, 40)),
+              const SizedBox(width: 6),
+              _playButton(model, audio),
+              const SizedBox(width: 2),
+              MfIconButton(
+                icon: Icons.queue_music_rounded,
+                size: 34,
+                glyph: 21,
+                tooltip: '播放列表',
+                onTap: () => showQueueSheet(context),
+              ),
             ],
           ),
-        ),
-      ],
+          // A childless CustomPaint collapses to zero width in loose
+          // constraints, so give the scrubber a tight row or it renders as a
+          // lone dot (most visible in landscape, where this bar shows alone).
+          SizedBox(
+            height: 16,
+            child: Row(
+              children: [
+                Expanded(child: _scrubber(model, position, durationSeconds)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -395,7 +399,7 @@ class _PlayerBarState extends State<PlayerBar>
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: audio.error != null ? Mf.accent : Mf.faint,
+                  color: audio.error != null ? Mf.accent : Mf.muted,
                   fontSize: 11.5,
                 ),
               ),
