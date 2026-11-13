@@ -1,10 +1,12 @@
-/// The "当前播放" bottom sheet: the live queue, recently played songs, row
-/// removal / drag reordering and the two bottom mode pills.
+/// The "当前播放" queue: the live queue, recently played songs, row removal /
+/// drag reordering and the compact bottom mode chips.
 ///
-/// Layout follows a mobile player's playlist: drag handle, two tabs with a
-/// count, a "来自：…" line, full-width rows with a close button and a drag
-/// handle, and two large rounded buttons floating over the end of the list.
+/// Two shapes share one body: a mobile bottom sheet (drag handle, rounded top,
+/// modal scrim) and a docked right-hand panel on desktop (title bar + close,
+/// no scrim, the library stays visible and interactive beside it).
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -15,6 +17,31 @@ import 'controls.dart';
 import 'theme.dart';
 
 enum QueueTab { current, history }
+
+/// Windows at least this wide get the docked panel. Matches HomeShell's
+/// desktop layout breakpoint so the two never disagree about the shape.
+const double kDockedQueueBreakpoint = 900;
+
+/// Single entry point for every "播放列表" button.
+///
+/// On a narrow window the mobile bottom sheet is still the right shape. On a
+/// desktop window the queue docks on the right: from the transport it toggles
+/// the panel, while from the full-window player ([fromFullPlayer]) it first
+/// returns to the library — that page covers the shell entirely, so a docked
+/// panel behind it would be invisible.
+void showQueue(BuildContext context, {bool fromFullPlayer = false}) {
+  if (MediaQuery.sizeOf(context).width < kDockedQueueBreakpoint) {
+    unawaited(showQueueSheet(context));
+    return;
+  }
+  final model = context.read<AppModel>();
+  if (fromFullPlayer) {
+    model.closeNowPlaying();
+    model.openQueuePanel();
+  } else {
+    model.toggleQueuePanel();
+  }
+}
 
 /// Shared with the full player and the mini bar so the mode glyph never
 /// disagrees with the queue sheet.
@@ -43,9 +70,17 @@ Future<void> showQueueSheet(BuildContext context) async {
 }
 
 class QueueSheet extends StatefulWidget {
-  const QueueSheet({super.key, this.initialTab = QueueTab.current});
+  const QueueSheet({
+    super.key,
+    this.initialTab = QueueTab.current,
+    this.docked = false,
+  });
 
   final QueueTab initialTab;
+
+  /// Desktop: render as a full-height right-hand panel with a title bar and a
+  /// close button instead of a rounded, bottom-aligned modal sheet.
+  final bool docked;
 
   @override
   State<QueueSheet> createState() => _QueueSheetState();
@@ -68,6 +103,31 @@ class _QueueSheetState extends State<QueueSheet> {
   @override
   Widget build(BuildContext context) {
     final model = context.watch<AppModel>();
+    // One body, two shells: the desktop panel keeps everything except the
+    // drag handle and the rounded / bottom-aligned frame.
+    final body = Column(
+      children: [
+        if (widget.docked) _panelHeader() else _handle(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 12, 0),
+          child: _tabs(model),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 6),
+          child: _source(model),
+        ),
+        Expanded(child: _list(model)),
+      ],
+    );
+    if (widget.docked) {
+      return DecoratedBox(
+        decoration: const BoxDecoration(
+          color: Mf.bg,
+          border: Border(left: BorderSide(color: Mf.border)),
+        ),
+        child: body,
+      );
+    }
     final height = (MediaQuery.sizeOf(context).height * 0.74).clamp(
       380.0,
       680.0,
@@ -86,23 +146,38 @@ class _QueueSheetState extends State<QueueSheet> {
                 color: Mf.bg,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
               ),
-              child: Column(
-                children: [
-                  _handle(),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 12, 0),
-                    child: _tabs(model),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 6),
-                    child: _source(model),
-                  ),
-                  Expanded(child: _list(model)),
-                ],
-              ),
+              child: body,
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// Desktop title bar: a phone-style drag handle makes no sense on a panel
+  /// that cannot be dragged away, so it becomes an explicit close control.
+  Widget _panelHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 14, 10, 0),
+      child: Row(
+        children: [
+          const Text(
+            '播放队列',
+            style: TextStyle(
+              color: Mf.text,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Spacer(),
+          MfIconButton(
+            icon: Icons.close_rounded,
+            size: 30,
+            glyph: 18,
+            tooltip: '关闭播放队列',
+            onTap: () => context.read<AppModel>().closeQueuePanel(),
+          ),
+        ],
       ),
     );
   }
@@ -223,7 +298,7 @@ class _QueueSheetState extends State<QueueSheet> {
         ReorderableListView.builder(
           scrollController: _scroll,
           buildDefaultDragHandles: false,
-          padding: const EdgeInsets.fromLTRB(8, 0, 8, 82),
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 62),
           itemCount: items.length,
           // Keep the classic callback: it is still honoured by older Flutter
           // SDKs (the macOS build machine) and reports the *insertion* index,
@@ -348,25 +423,22 @@ class _QueueSheetState extends State<QueueSheet> {
           stops: [0, 0.38, 1],
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Expanded(
-            child: _Pill(
-              icon: playModeIcon(model.playMode),
-              label: playModeLabel(model.playMode),
-              tooltip: '切换播放模式',
-              onTap: model.cyclePlayMode,
-            ),
+          _Pill(
+            icon: playModeIcon(model.playMode),
+            label: playModeLabel(model.playMode),
+            tooltip: '切换播放模式',
+            onTap: model.cyclePlayMode,
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: _Pill(
-              icon: Icons.my_location_rounded,
-              label: '回到当前',
-              tooltip: '定位到正在播放的歌曲',
-              onTap: _scrollToCurrent,
-            ),
+          const SizedBox(width: 8),
+          _Pill(
+            icon: Icons.my_location_rounded,
+            label: '回到当前',
+            tooltip: '定位到正在播放的歌曲',
+            onTap: _scrollToCurrent,
           ),
         ],
       ),
@@ -389,7 +461,12 @@ class _QueueSheetState extends State<QueueSheet> {
   }
 }
 
-/// One of the two large rounded buttons floating over the queue.
+/// One of the two compact chips floating over the queue.
+///
+/// Both shapes (docked panel and phone sheet) share this widget. They used to
+/// be 46px-high pills splitting the full panel width, which dominated the
+/// 300-360px desktop sidebar. Now they hug their label: a 30px visual chip
+/// inside a 38px tap target, centred as a pair on both layouts.
 class _Pill extends StatelessWidget {
   const _Pill({
     required this.icon,
@@ -408,31 +485,38 @@ class _Pill extends StatelessWidget {
     return Tooltip(
       message: tooltip,
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        child: Container(
-          height: 46,
-          decoration: BoxDecoration(
-            color: Mf.surfaceAlt.withValues(alpha: 0.94),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 17, color: Mf.textSoft),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Mf.textSoft,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
+        child: SizedBox(
+          height: 38,
+          child: Center(
+            child: Container(
+              key: ValueKey('queue-pill-$label'),
+              height: 30,
+              padding: const EdgeInsets.symmetric(horizontal: 11),
+              decoration: BoxDecoration(
+                color: Mf.surface.withValues(alpha: 0.92),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Mf.border),
               ),
-            ],
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 15, color: Mf.muted),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Mf.textSoft,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),

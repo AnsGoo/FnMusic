@@ -258,25 +258,35 @@ class _SectionCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: Mf.text,
-              fontSize: 16.5,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.2,
+          // A docked queue narrows the library pane; without flex here the
+          // title + subtitle could push "查看全部" out of the Row.
+          Flexible(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Mf.text,
+                fontSize: 16.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.2,
+              ),
             ),
           ),
           const SizedBox(width: 10),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 1),
-            child: Text(
-              subtitle,
-              style: const TextStyle(color: Mf.faint, fontSize: 11.5),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 1),
+              child: Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Mf.muted, fontSize: 11.5),
+              ),
             ),
           ),
-          const Spacer(),
-          if (onTitleTap != null)
+          if (onTitleTap != null) ...[
+            const SizedBox(width: 8),
             const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -285,6 +295,7 @@ class _SectionCard extends StatelessWidget {
                 Icon(Icons.chevron_right_rounded, size: 17, color: Mf.muted),
               ],
             ),
+          ],
         ],
       ),
     );

@@ -261,6 +261,11 @@ class AppModel extends ChangeNotifier {
   bool _lyricsVisible = false;
   bool _nowPlaying = false;
 
+  /// On a desktop window the queue docks on the right instead of covering
+  /// the library with a modal sheet. Phones keep the bottom sheet, whose
+  /// visibility is owned by the Navigator rather than by this flag.
+  bool _queuePanelVisible = false;
+
   // ---- Cast ---------------------------------------------------------------
 
   CastService? _castService;
@@ -360,6 +365,9 @@ class AppModel extends ChangeNotifier {
 
   /// The full-window player opened by tapping the cover in the transport.
   bool get nowPlayingVisible => _nowPlaying;
+
+  /// Whether the desktop right-hand queue panel is docked open.
+  bool get queuePanelVisible => _queuePanelVisible;
 
   // ---- Cast ---------------------------------------------------------------
 
@@ -537,6 +545,7 @@ class AppModel extends ChangeNotifier {
     _lyrics = null;
     _lyricsVisible = false;
     _nowPlaying = false;
+    _queuePanelVisible = false;
     _homeLoaded = false;
     _homeHot = const [];
     _homeRecent = const [];
@@ -2331,6 +2340,23 @@ class AppModel extends ChangeNotifier {
     _lyricsVisible = false;
     notifyListeners();
   }
+
+  // ---- Desktop queue panel -------------------------------------------------
+
+  void openQueuePanel() {
+    if (_queuePanelVisible) return;
+    _queuePanelVisible = true;
+    notifyListeners();
+  }
+
+  void closeQueuePanel() {
+    if (!_queuePanelVisible) return;
+    _queuePanelVisible = false;
+    notifyListeners();
+  }
+
+  void toggleQueuePanel() =>
+      _queuePanelVisible ? closeQueuePanel() : openQueuePanel();
 
   // ---- Now playing --------------------------------------------------------
 

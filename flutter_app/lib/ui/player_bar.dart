@@ -90,7 +90,15 @@ class _PlayerBarState extends State<PlayerBar>
             widget.wide ? 10 : 8,
           ),
           child: widget.wide
-              ? _wideLayout(model, audio, position, durationSeconds)
+              ? LayoutBuilder(
+                  builder: (context, constraints) => _wideLayout(
+                    model,
+                    audio,
+                    position,
+                    durationSeconds,
+                    constraints.maxWidth,
+                  ),
+                )
               : _compactLayout(model, audio, position, durationSeconds),
         );
       },
@@ -102,6 +110,7 @@ class _PlayerBarState extends State<PlayerBar>
     PlaybackState audio,
     double position,
     double durationSeconds,
+    double availableWidth,
   ) {
     // Mirror of everything right of the scrubber: the total clock (38) + gap
     // (10) + gap (14) + favourite button (30) + gap (10) + cast button (30)
@@ -109,7 +118,14 @@ class _PlayerBarState extends State<PlayerBar>
     // transport buttons and the inline lyric centre over this span so they
     // line up with the scrubber.
     // +40 for the queue button (30dp + 10dp gap) added after the cast button.
-    final rightSpan = (isMobilePlatform ? 132.0 : 262.0) + 40.0;
+    //
+    // The mirror only fits when the bar is wide enough. In a 900px window
+    // (or a narrow split view) it would eat the entire middle column and
+    // push the transport buttons out of the Row, so drop it and let the
+    // controls centre in whatever space is actually there.
+    final rightSpan = availableWidth < 760
+        ? 0.0
+        : (isMobilePlatform ? 132.0 : 262.0) + 40.0;
     return Row(
       children: [
         // Like the web transport (flex: 1.2 middle): the song info and the
@@ -213,8 +229,9 @@ class _PlayerBarState extends State<PlayerBar>
                     icon: Icons.queue_music_rounded,
                     size: 30,
                     glyph: 18,
-                    tooltip: '播放列表',
-                    onTap: () => showQueueSheet(context),
+                    color: model.queuePanelVisible ? Mf.accentHover : null,
+                    tooltip: model.queuePanelVisible ? '关闭播放列表' : '播放列表',
+                    onTap: () => showQueue(context),
                   ),
                   if (!isMobilePlatform) ...[
                     const SizedBox(width: 10),
@@ -293,7 +310,7 @@ class _PlayerBarState extends State<PlayerBar>
                 size: 34,
                 glyph: 21,
                 tooltip: '播放列表',
-                onTap: () => showQueueSheet(context),
+                onTap: () => showQueue(context),
               ),
             ],
           ),

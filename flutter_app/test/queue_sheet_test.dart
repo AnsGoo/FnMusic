@@ -9,6 +9,7 @@ import 'package:musicfly/audio/player.dart';
 import 'package:musicfly/data/models.dart';
 import 'package:musicfly/data/musicfree_client.dart';
 import 'package:musicfly/state/app_model.dart';
+import 'package:musicfly/ui/home_shell.dart';
 import 'package:musicfly/ui/now_playing.dart';
 import 'package:musicfly/ui/player_bar.dart';
 import 'package:musicfly/ui/queue_sheet.dart';
@@ -86,6 +87,11 @@ void _phone(WidgetTester tester, {double width = 390, double height = 844}) {
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
 }
+
+/// The desktop shape, as opposed to the modal bottom sheet.
+Finder _dockedPanel() => find.byWidgetPredicate(
+  (widget) => widget is QueueSheet && widget.docked,
+);
 
 void main() {
   test('playFrom records the source and starts the history', () async {
@@ -376,4 +382,172 @@ void main() {
     expect(find.byTooltip('歌曲信息'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  test('the desktop queue panel is a toggleable model flag', () {
+    final model = _model(_FakePlayer());
+    addTearDown(model.dispose);
+
+    expect(model.queuePanelVisible, isFalse);
+    model.toggleQueuePanel();
+    expect(model.queuePanelVisible, isTrue);
+    model.openQueuePanel();
+    expect(model.queuePanelVisible, isTrue);
+    model.toggleQueuePanel();
+    model.closeQueuePanel();
+    expect(model.queuePanelVisible, isFalse);
+  });
+
+  testWidgets('a desktop queue docks on the right with no modal scrim', (
+    tester,
+  ) async {
+    _phone(tester, width: 1200, height: 800);
+    final player = _FakePlayer();
+    final model = _model(player);
+    addTearDown(model.dispose);
+    await model.playFrom(_tracks(3), 0, source: '歌曲库');
+
+    await tester.pumpWidget(_host(model, const HomeShell()));
+    await tester.pump();
+    await tester.tap(find.byTooltip('播放列表'));
+    await tester.pump();
+
+    expect(model.queuePanelVisible, isTrue);
+    expect(_dockedPanel(), findsOneWidget);
+    // The library is still interactive: no bottom sheet, no barrier.
+    expect(find.byType(BottomSheet), findsNothing);
+    expect(find.byTooltip('关闭播放队列'), findsOneWidget);
+    expect(find.text('播放队列'), findsOneWidget);
+    expect(find.text('来自：歌曲库'), findsOneWidget);
+    expect(find.text('顺序播放'), findsOneWidget);
+
+    final rect = tester.getRect(_dockedPanel());
+    expect(rect.right, closeTo(1200, 1));
+    expect(rect.width, greaterThanOrEqualTo(300));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('both the transport toggle and the panel close button work', (
+    tester,
+  ) async {
+    _phone(tester, width: 1200, height: 800);
+    final model = _model(_FakePlayer());
+    addTearDown(model.dispose);
+    await model.playFrom(_tracks(3), 0);
+
+    await tester.pumpWidget(_host(model, const HomeShell()));
+    await tester.pump();
+    await tester.tap(find.byTooltip('播放列表'));
+    await tester.pump();
+    expect(_dockedPanel(), findsOneWidget);
+
+    await tester.tap(find.byTooltip('关闭播放列表'));
+    await tester.pump();
+    expect(model.queuePanelVisible, isFalse);
+    expect(_dockedPanel(), findsNothing);
+
+    await tester.tap(find.byTooltip('播放列表'));
+    await tester.pump();
+    expect(_dockedPanel(), findsOneWidget);
+    await tester.tap(find.byTooltip('关闭播放队列'));
+    await tester.pump();
+    expect(model.queuePanelVisible, isFalse);
+    expect(_dockedPanel(), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the full-screen player returns to the library before docking', (
+    tester,
+  ) async {
+    _phone(tester, width: 1200, height: 800);
+    final model = _model(_FakePlayer());
+    addTearDown(model.dispose);
+    await model.playFrom(_tracks(3), 0);
+    model.openNowPlaying();
+
+    await tester.pumpWidget(_host(model, const HomeShell()));
+    await tester.pump();
+    expect(find.byType(NowPlayingPage), findsOneWidget);
+
+    await tester.tap(find.byTooltip('播放列表'));
+    await tester.pump();
+
+    expect(model.nowPlayingVisible, isFalse);
+    expect(model.queuePanelVisible, isTrue);
+    expect(find.byType(NowPlayingPage), findsNothing);
+    expect(_dockedPanel(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a phone player still uses the bottom sheet', (tester) async {
+    _phone(tester);
+    final model = _model(_FakePlayer());
+    addTearDown(model.dispose);
+    await model.playFrom(_tracks(3), 0);
+    model.openNowPlaying();
+
+    await tester.pumpWidget(_host(model, const HomeShell()));
+    await tester.pump();
+    await tester.tap(find.byTooltip('播放列表'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(BottomSheet), findsOneWidget);
+    expect(_dockedPanel(), findsNothing);
+    expect(model.queuePanelVisible, isFalse);
+    expect(model.nowPlayingVisible, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  // The two footer controls must not grow back into full-width 46px pills:
+  // they used to dominate the 300-360px desktop sidebar and the phone sheet.
+  for (final size in const <Size>[Size(1200, 800), Size(390, 844)]) {
+    testWidgets('footer chips stay compact at $size', (tester) async {
+      _phone(tester, width: size.width, height: size.height);
+      final model = _model(_FakePlayer());
+      addTearDown(model.dispose);
+      await model.playFrom(_tracks(3), 0, source: '歌曲库');
+
+      if (size.width >= kDockedQueueBreakpoint) {
+        model.openQueuePanel();
+        await tester.pumpWidget(_host(model, const HomeShell()));
+      } else {
+        await tester.pumpWidget(_host(model, const QueueSheet()));
+      }
+      await tester.pump();
+
+      final mode = find.byKey(const ValueKey('queue-pill-顺序播放'));
+      final locate = find.byKey(const ValueKey('queue-pill-回到当前'));
+      expect(mode, findsOneWidget);
+      expect(locate, findsOneWidget);
+
+      final modeSize = tester.getSize(mode);
+      final locateSize = tester.getSize(locate);
+      expect(modeSize.height, lessThanOrEqualTo(32));
+      expect(locateSize.height, lessThanOrEqualTo(32));
+      expect(modeSize.width, lessThan(140));
+      expect(locateSize.width, lessThan(140));
+      // Both chips together stay well short of the panel width.
+      expect(modeSize.width + locateSize.width, lessThan(size.width * 0.7));
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final size in const <Size>[
+    Size(900, 600),
+    Size(1024, 768),
+    Size(1440, 900),
+  ]) {
+    testWidgets('docked queue does not overflow at $size', (tester) async {
+      _phone(tester, width: size.width, height: size.height);
+      final model = _model(_FakePlayer());
+      addTearDown(model.dispose);
+      await model.playFrom(_tracks(3), 0);
+      model.openQueuePanel();
+
+      await tester.pumpWidget(_host(model, const HomeShell()));
+      await tester.pump();
+
+      expect(_dockedPanel(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

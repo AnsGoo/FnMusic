@@ -9,6 +9,7 @@ import 'browse_view.dart';
 import 'lyrics_view.dart';
 import 'now_playing.dart';
 import 'player_bar.dart';
+import 'queue_sheet.dart';
 import 'settings_page.dart';
 import 'theme.dart';
 
@@ -28,7 +29,7 @@ class _HomeShellState extends State<HomeShell> {
     _surfaceError(model);
     return LayoutBuilder(
       builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 900;
+        final wide = constraints.maxWidth >= kDockedQueueBreakpoint;
         return Scaffold(
           backgroundColor: Mf.bg,
           // A phone has no room for a rail, so the same sidebar slides in from
@@ -39,7 +40,7 @@ class _HomeShellState extends State<HomeShell> {
           // A phone swipe rarely starts within Flutter's default 20dp edge,
           // so widen the grab strip without covering the whole screen.
           drawerEdgeDragWidth: wide ? null : 56,
-          body: wide ? _desktop(model) : _compact(model),
+          body: wide ? _desktop(model, constraints) : _compact(model),
         );
       },
     );
@@ -65,10 +66,16 @@ class _HomeShellState extends State<HomeShell> {
   bool _showingPlayer(AppModel model) =>
       model.nowPlayingVisible && model.currentTrack != null;
 
-  Widget _desktop(AppModel model) {
+  Widget _desktop(AppModel model, BoxConstraints constraints) {
     if (_showingPlayer(model)) {
       return const NowPlayingPage();
     }
+    // The queue docks beside the library, not over it: the Expanded pane
+    // gives up its width, so browsing and editing the queue work together
+    // with no modal scrim. It deliberately stops above the transport —
+    // letting it take a full-height column would squeeze the desktop player
+    // bar down to ~390px and overflow its fixed-width control row.
+    final panelWidth = (constraints.maxWidth * 0.28).clamp(300.0, 360.0);
     return Row(
       children: [
         _Sidebar(model: model),
@@ -77,11 +84,29 @@ class _HomeShellState extends State<HomeShell> {
           child: Column(
             children: [
               Expanded(
-                child: Stack(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Positioned.fill(child: BrowseView()),
-                    if (model.lyricsVisible)
-                      const Positioned.fill(child: LyricsPanel()),
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          const Positioned.fill(child: BrowseView()),
+                          if (model.lyricsVisible)
+                            const Positioned.fill(child: LyricsPanel()),
+                        ],
+                      ),
+                    ),
+                    if (model.queuePanelVisible) ...[
+                      const VerticalDivider(
+                        width: 1,
+                        thickness: 1,
+                        color: Mf.border,
+                      ),
+                      SizedBox(
+                        width: panelWidth,
+                        child: const QueueSheet(docked: true),
+                      ),
+                    ],
                   ],
                 ),
               ),

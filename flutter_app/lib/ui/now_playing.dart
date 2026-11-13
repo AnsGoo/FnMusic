@@ -439,7 +439,7 @@ class _NowPlayingPageState extends State<NowPlayingPage>
         size: 44,
         glyph: 22,
         tooltip: '播放列表',
-        onTap: () => showQueueSheet(context),
+        onTap: () => showQueue(context, fromFullPlayer: true),
       ),
     ];
     if (spaced) {
